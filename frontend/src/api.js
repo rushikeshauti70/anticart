@@ -51,6 +51,8 @@ export const api = {
       body: isCsv ? body : JSON.stringify(body),
     });
   },
+  aiBarcodeLookup: (barcode, hint = '') =>
+    request('/api/products/ai-lookup', { method: 'POST', body: JSON.stringify({ barcode, hint }) }),
 
   // Cart
   getCart: (trolleyId = 'trolley-01') => request(`/api/cart?trolleyId=${trolleyId}`),

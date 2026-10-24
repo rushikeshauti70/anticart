@@ -33,6 +33,29 @@ export function ShopView({ onSelectBarcodeForScan }) {
 
   // Import state
   const [importCsv, setImportCsv] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  async function handleAiLookup() {
+    if (!formBarcode.trim()) return;
+    setAiLoading(true);
+    try {
+      const res = await api.aiBarcodeLookup(formBarcode.trim(), formName.trim());
+      if (res.suggestion) {
+        if (res.suggestion.name && !formName) setFormName(res.suggestion.name);
+        if (res.suggestion.category) setFormCategory(res.suggestion.category);
+        if (res.suggestion.price && !formPrice) setFormPrice(String(res.suggestion.price));
+        if (res.suggestion.gst_percent !== undefined) setFormGst(String(res.suggestion.gst_percent));
+        setSuccessMessage('Auto-filled product suggestions via AI');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } else if (!res.configured) {
+        setErrorMessage('AI features require GOOGLE_API_KEY configured in backend environment.');
+      }
+    } catch (err) {
+      console.warn('AI lookup warning:', err.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   useEffect(() => {
     loadProducts();
@@ -271,14 +294,25 @@ export function ShopView({ onSelectBarcodeForScan }) {
             <form onSubmit={handleSaveProduct}>
               <div className="form-group">
                 <label className="form-label">Barcode Number *</label>
-                <input
-                  type="text"
-                  required
-                  className="input"
-                  placeholder="e.g. 8901030383921"
-                  value={formBarcode}
-                  onChange={(e) => setFormBarcode(e.target.value)}
-                />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    required
+                    className="input"
+                    placeholder="e.g. 8901030383921"
+                    value={formBarcode}
+                    onChange={(e) => setFormBarcode(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ whiteSpace: 'nowrap' }}
+                    disabled={!formBarcode.trim() || aiLoading}
+                    onClick={handleAiLookup}
+                  >
+                    {aiLoading ? 'Looking up...' : 'AI Suggest'}
+                  </button>
+                </div>
               </div>
 
               <div className="form-group">
