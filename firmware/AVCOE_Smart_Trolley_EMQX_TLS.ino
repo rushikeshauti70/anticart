@@ -39,11 +39,23 @@
 #include "driver/gpio.h"
 
 // ======================== 1. USER CONFIGURATION (WEB APP CONTRACT) ========================
-const char* WIFI_SSID     = "android;
-const char* WIFI_PASSWORD = "12341234";
-
-const char* MQTT_BROKER = "k8812401.ala.eu-central-1.emqxsl.com";
-const int   MQTT_PORT   = 8883;
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+  const char* MQTT_BROKER   = SECRET_MQTT_BROKER;
+  const int   MQTT_PORT     = SECRET_MQTT_PORT;
+  const char* MQTT_USER     = SECRET_MQTT_USER;
+  const char* MQTT_PASS     = SECRET_MQTT_PASS;
+#else
+  // Fallback placeholders - copy secrets.h.example to secrets.h for real deployment
+  const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+  const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+  const char* MQTT_BROKER   = "k8812401.ala.eu-central-1.emqxsl.com";
+  const int   MQTT_PORT     = 8883;
+  const char* MQTT_USER     = "rushikesh";
+  const char* MQTT_PASS     = "";
+#endif
 
 // EMQX Cloud TLS root CA supplied with this project.
 // Keep certificate validation enabled; do not use setInsecure().
@@ -71,9 +83,6 @@ pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl
 MrY=
 -----END CERTIFICATE-----
 )EOF";
-
-const char* MQTT_USER   = "rushikesh";
-const char* MQTT_PASS   = "12345678";
 
 const char* DEVICE_ID     = "trolley-01";     // must match ALLOWED_DEVICE_IDS on the server
 const char* TOPIC_PREFIX  = "avcoeshop/v1";

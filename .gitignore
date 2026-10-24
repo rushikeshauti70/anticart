@@ -17,6 +17,8 @@ frontend/.env
 !.env.example
 !backend/.env.example
 !frontend/.env.example
+firmware/secrets.h
+!firmware/secrets.h.example
 
 # IDE & system metadata
 .DS_Store

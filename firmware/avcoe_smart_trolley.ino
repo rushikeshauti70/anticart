@@ -38,13 +38,22 @@
 #include "driver/gpio.h"
 
 // ======================== 1. USER CONFIGURATION (WEB APP CONTRACT) ========================
-const char* WIFI_SSID     = "android";
-const char* WIFI_PASSWORD = "12341234";
-
-const char* MQTT_BROKER   = "broker.emqx.io";
-const int   MQTT_PORT     = 1883;
-const char* MQTT_USER     = "";   // leave empty if unauthenticated
-const char* MQTT_PASS     = "";
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+  const char* MQTT_BROKER   = SECRET_MQTT_BROKER;
+  const int   MQTT_PORT     = SECRET_MQTT_PORT;
+  const char* MQTT_USER     = SECRET_MQTT_USER;
+  const char* MQTT_PASS     = SECRET_MQTT_PASS;
+#else
+  const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+  const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+  const char* MQTT_BROKER   = "broker.emqx.io";
+  const int   MQTT_PORT     = 1883;
+  const char* MQTT_USER     = "";
+  const char* MQTT_PASS     = "";
+#endif
 
 const char* DEVICE_ID     = "trolley-01";     // must match ALLOWED_DEVICE_IDS on the server
 const char* TOPIC_PREFIX  = "avcoeshop/v1";
