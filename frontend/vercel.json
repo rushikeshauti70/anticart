@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://avcoe-smart-trolley-backend.onrender.com/api/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://avcoe-smart-trolley-backend.onrender.com/health"
+    }
+  ]
+}
