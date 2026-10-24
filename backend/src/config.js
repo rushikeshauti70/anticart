@@ -21,11 +21,11 @@ export const config = {
   frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
   supabase: {
     url: process.env.SUPABASE_URL || '',
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',
   },
   mqtt: {
-    url: process.env.MQTT_URL || 'mqtts://k8812401.ala.eu-central-1.emqxsl.com:8883',
-    username: process.env.MQTT_USERNAME || '',
+    url: process.env.MQTT_URL || (process.env.MQTT_HOST ? `mqtts://${process.env.MQTT_HOST}:${process.env.MQTT_PORT || 8883}` : 'mqtts://k8812401.ala.eu-central-1.emqxsl.com:8883'),
+    username: process.env.MQTT_USERNAME || 'rushikesh',
     password: process.env.MQTT_PASSWORD || '',
     caCert: getCaCert(),
     topicPrefix: process.env.MQTT_TOPIC_PREFIX || 'avcoeshop/v1',
