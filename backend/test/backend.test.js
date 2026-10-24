@@ -167,10 +167,11 @@ async function runTests() {
 
   // 6. Bulk Import
   console.log('Test 6: Bulk import...');
+  const tSuffix = Date.now().toString().slice(-6);
   const bulkCsv = `barcode,name,category,price,gst_percent,stock
-890001,Bread,Groceries,40.00,0,15
-890002,Butter,Dairy,55.00,12,10
-890003,Biscuits,Snacks,20.00,18,50`;
+891${tSuffix}1,Bread,Groceries,40.00,0,15
+891${tSuffix}2,Butter,Dairy,55.00,12,10
+891${tSuffix}3,Biscuits,Snacks,20.00,18,50`;
 
   const importRes = await request('/api/products/import', {
     method: 'POST',

@@ -47,7 +47,8 @@ trolleyRouter.post('/trolley/:id/command', async (req, res, next) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: err.errors[0].message } });
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
     }
     if (err.code === 'BROKER_NOT_CONNECTED') {
       return res.status(503).json({

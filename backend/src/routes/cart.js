@@ -46,7 +46,8 @@ cartRouter.post('/scan', async (req, res, next) => {
     });
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: err.errors[0].message } });
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
     }
     if (err.code === 'UNKNOWN_BARCODE') {
       return res.status(404).json({
@@ -77,7 +78,8 @@ cartRouter.patch('/cart/items/:productId', async (req, res, next) => {
     res.json(updatedCart);
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: err.errors[0].message } });
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
     }
     next(err);
   }

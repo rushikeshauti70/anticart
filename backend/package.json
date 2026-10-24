@@ -12,11 +12,11 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
     "cors": "^2.8.5",
-    "csv-parse": "^5.6.0",
+    "csv-parse": "^7.0.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mqtt": "^5.10.3",
     "uuid": "^11.1.0",
-    "zod": "^3.24.2"
+    "zod": "^4.6.7"
   }
 }

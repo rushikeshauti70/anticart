@@ -51,7 +51,8 @@ productsRouter.post('/products', async (req, res, next) => {
     res.status(201).json(product);
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: err.errors[0].message } });
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
     }
     if (err.code === 'DUPLICATE_BARCODE') {
       return res.status(409).json({ error: { code: 'DUPLICATE_BARCODE', message: err.message } });
@@ -72,7 +73,8 @@ productsRouter.put('/products/:id', async (req, res, next) => {
     res.json(updated);
   } catch (err) {
     if (err.name === 'ZodError') {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: err.errors[0].message } });
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
     }
     if (err.code === 'DUPLICATE_BARCODE') {
       return res.status(409).json({ error: { code: 'DUPLICATE_BARCODE', message: err.message } });
@@ -139,7 +141,7 @@ productsRouter.post('/products/import', async (req, res, next) => {
           index,
           barcode: row.barcode || `row-${index}`,
           status: 'error',
-          error: err.code || (err.errors ? err.errors[0].message : err.message),
+          error: err.code || (err.issues?.[0]?.message || (err.errors ? err.errors[0].message : err.message)),
         });
       }
     }
