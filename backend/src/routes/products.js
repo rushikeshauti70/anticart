@@ -154,3 +154,66 @@ productsRouter.post('/products/import', async (req, res, next) => {
     next(err);
   }
 });
+
+// POST /api/products/ai-lookup (Server-side Gemini AI proxy for barcode metadata)
+productsRouter.post('/products/ai-lookup', async (req, res) => {
+  const { barcode, hint = '' } = req.body || {};
+  if (!barcode) {
+    return res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'Barcode is required' } });
+  }
+
+  // Import config dynamically to avoid circular references
+  const { config } = await import('../config.js');
+
+  if (!config.googleApiKey) {
+    return res.json({
+      configured: false,
+      message: 'GOOGLE_API_KEY is not configured on the server',
+      suggestion: null,
+    });
+  }
+
+  try {
+    const prompt = `You are a retail product catalog assistant. Identify or estimate product details for barcode "${barcode}" (additional context: "${hint}").
+Respond ONLY with a valid JSON object with keys:
+"name": estimated or standard product name in Indian retail (e.g. Amul Milk, Lays Chips),
+"category": one of ["Groceries", "Snacks", "Dairy", "Beverages", "Electronics", "Stationery", "General"],
+"price": estimated numeric price in INR (e.g. 30),
+"gst_percent": standard Indian GST rate (0, 5, 12, 18, or 28).`;
+
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.googleApiKey}`;
+    const response = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[AI LOOKUP] Gemini API returned status ${response.status}`);
+      return res.json({ configured: true, suggestion: null });
+    }
+
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) {
+      return res.json({ configured: true, suggestion: null });
+    }
+
+    const parsed = JSON.parse(rawText);
+    return res.json({
+      configured: true,
+      suggestion: {
+        name: parsed.name || '',
+        category: parsed.category || 'General',
+        price: parseFloat(parsed.price) || 0,
+        gst_percent: parseFloat(parsed.gst_percent) || 5,
+      },
+    });
+  } catch (err) {
+    console.error('[AI LOOKUP] Error calling Gemini API:', err.message);
+    return res.json({ configured: true, suggestion: null });
+  }
+});

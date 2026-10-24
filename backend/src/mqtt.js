@@ -67,13 +67,19 @@ class MqttManager {
         this.lastError = null;
         console.log('[MQTT] Connected to EMQX broker successfully.');
 
-        // Subscribe to all device subtopics
-        const subPattern = `${config.mqtt.topicPrefix}/devices/+/#`;
-        this.client.subscribe(subPattern, { qos: 1 }, (err) => {
+        // Subscribe explicitly to designated device subtopics
+        const topics = [
+          `${config.mqtt.topicPrefix}/devices/+/telemetry`,
+          `${config.mqtt.topicPrefix}/devices/+/status`,
+          `${config.mqtt.topicPrefix}/devices/+/events`,
+          `${config.mqtt.topicPrefix}/devices/+/command-ack`,
+        ];
+
+        this.client.subscribe(topics, { qos: 1 }, (err) => {
           if (err) {
-            console.error(`[MQTT] Subscription failed to ${subPattern}:`, err.message);
+            console.error('[MQTT] Subscription error:', err.message);
           } else {
-            console.log(`[MQTT] Subscribed to pattern: ${subPattern}`);
+            console.log(`[MQTT] Subscribed to ${topics.length} explicit device topics.`);
           }
         });
       });

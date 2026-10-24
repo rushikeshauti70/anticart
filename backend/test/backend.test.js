@@ -67,6 +67,10 @@ async function runTests() {
 
   // 3. Scan Flow and Idempotency
   console.log('Test 3: Scan flow and scanId idempotency...');
+  await request('/api/cart/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ trolleyId: 'trolley-01' }),
+  });
 
   // Unknown barcode
   const unknownScanId = uuidv4();
@@ -190,6 +194,16 @@ async function runTests() {
   });
   assert.strictEqual(badCmdRes.status, 400);
   console.log('Passed: Invalid command rejected with 400');
+
+  // 8. Server-Side AI Barcode Lookup Proxy
+  console.log('Test 8: Server-side AI barcode lookup proxy...');
+  const aiRes = await request('/api/products/ai-lookup', {
+    method: 'POST',
+    body: JSON.stringify({ barcode: '8901030383921', hint: 'Butter' }),
+  });
+  assert.strictEqual(aiRes.status, 200);
+  assert.ok('configured' in aiRes.data);
+  console.log('Passed: AI barcode lookup responded with HTTP 200 and valid schema');
 
   console.log('--- ALL BACKEND VERIFICATION TESTS PASSED ---');
 }

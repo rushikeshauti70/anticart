@@ -8,6 +8,7 @@ import { productsRouter } from './routes/products.js';
 import { cartRouter } from './routes/cart.js';
 import { purchasesRouter } from './routes/purchases.js';
 import { trolleyRouter } from './routes/trolley.js';
+import { optionalJwtAuth } from './middleware/auth.js';
 
 const app = express();
 
@@ -37,6 +38,9 @@ app.use(cors({
 // Body parsing with size limits
 app.use(express.json({ limit: '64kb' }));
 app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '512kb' }));
+
+// Optional Supabase JWT Auth via JWKS
+app.use(optionalJwtAuth);
 
 // Health check endpoint (at root as per section 8)
 app.use(healthRouter);
