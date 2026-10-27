@@ -1141,10 +1141,22 @@ void setup() {
   xTaskCreatePinnedToCore(networkTask, "net", 8192, nullptr, 1, nullptr, 0);
 
   // Attach motor PWM first, then the servo (avoids LEDC channel/timer clashes)
+#if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
   const bool ok = ledcAttach(LEFT_IN1, MOTOR_PWM_FREQ, PWM_BITS) &&
                   ledcAttach(LEFT_IN2, MOTOR_PWM_FREQ, PWM_BITS) &&
                   ledcAttach(RIGHT_IN1, MOTOR_PWM_FREQ, PWM_BITS) &&
                   ledcAttach(RIGHT_IN2, MOTOR_PWM_FREQ, PWM_BITS);
+#else
+  ledcSetup(0, MOTOR_PWM_FREQ, PWM_BITS);
+  ledcSetup(1, MOTOR_PWM_FREQ, PWM_BITS);
+  ledcSetup(2, MOTOR_PWM_FREQ, PWM_BITS);
+  ledcSetup(3, MOTOR_PWM_FREQ, PWM_BITS);
+  ledcAttachPin(LEFT_IN1, 0);
+  ledcAttachPin(LEFT_IN2, 1);
+  ledcAttachPin(RIGHT_IN1, 2);
+  ledcAttachPin(RIGHT_IN2, 3);
+  const bool ok = true;
+#endif
   if (!ok) {
     Serial.println("ERROR: Motor PWM initialization failed.");
     while (true) delay(1000);
