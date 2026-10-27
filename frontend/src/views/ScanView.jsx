@@ -13,11 +13,25 @@ function generateUuid() {
   });
 }
 
-// Lazy-load ZXing reader only when required to keep initial load lightweight
+// Lazy-load ZXing reader with TRY_HARDER and explicit retail 1D/2D formats
 let zxingModulePromise = null;
 async function getZxingReader() {
   if (!zxingModulePromise) {
-    zxingModulePromise = import('@zxing/library').then((mod) => new mod.BrowserMultiFormatReader());
+    zxingModulePromise = import('@zxing/library').then(({ BrowserMultiFormatReader, DecodeHintType, BarcodeFormat }) => {
+      const hints = new Map();
+      hints.set(DecodeHintType.TRY_HARDER, true);
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.ITF,
+        BarcodeFormat.QR_CODE,
+      ]);
+      return new BrowserMultiFormatReader(hints);
+    });
   }
   return zxingModulePromise;
 }
@@ -31,6 +45,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
   const [unknownBarcode, setUnknownBarcode] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successNotice, setSuccessNotice] = useState('');
+  const [scanFlash, setScanFlash] = useState(false);
 
   // Device & torch states
   const [availableCameras, setAvailableCameras] = useState([]);
@@ -67,7 +82,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
     } catch (e) {}
   }
 
-  // Lightweight stream acquisition with optimal barcode resolution (640x480)
+  // Progressive stream acquisition with optimal resolution for thin barcode lines
   async function acquireMediaStream(deviceId = null) {
     if (!navigator?.mediaDevices?.getUserMedia) {
       if (typeof window !== 'undefined' && !window.isSecureContext) {
@@ -76,7 +91,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
       throw new Error('Camera access is not supported by this browser. Use manual barcode entry.');
     }
 
-    const requestWithTimeout = (constraints, ms = 8000) => {
+    const requestWithTimeout = (constraints, ms = 7000) => {
       return Promise.race([
         navigator.mediaDevices.getUserMedia(constraints),
         new Promise((_, reject) =>
@@ -85,34 +100,38 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
       ]);
     };
 
-    // Tier 1: Fast, low-bandwidth 640x480 resolution (ideal for responsive barcode scanning)
+    // Tier 1: 720p ideal (crisp resolution so fine barcode lines are clearly resolved)
     try {
       const tier1 = {
         video: deviceId
           ? { deviceId: { exact: deviceId } }
           : {
               facingMode: { ideal: 'environment' },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
             },
         audio: false,
       };
-      return await requestWithTimeout(tier1, 4000);
+      return await requestWithTimeout(tier1, 3500);
     } catch (err1) {
       if (err1.name === 'NotAllowedError' || err1.name === 'PermissionDeniedError') {
         throw err1;
       }
     }
 
-    // Tier 2: Generic environment camera
+    // Tier 2: 640x480 fallback
     try {
       const tier2 = {
         video: deviceId
           ? { deviceId: { exact: deviceId } }
-          : { facingMode: 'environment' },
+          : {
+              facingMode: 'environment',
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+            },
         audio: false,
       };
-      return await requestWithTimeout(tier2, 4000);
+      return await requestWithTimeout(tier2, 3500);
     } catch (err2) {
       if (err2.name === 'NotAllowedError' || err2.name === 'PermissionDeniedError') {
         throw err2;
@@ -120,7 +139,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
     }
 
     // Tier 3: Universal fallback (any camera / laptop webcam)
-    return await requestWithTimeout({ video: true, audio: false }, 6000);
+    return await requestWithTimeout({ video: true, audio: false }, 5000);
   }
 
   async function startCamera(targetDeviceId = null) {
@@ -148,7 +167,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
 
       streamRef.current = stream;
 
-      // Check torch capability
+      // Check for torch capability
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack?.getCapabilities) {
         const caps = videoTrack.getCapabilities();
@@ -206,13 +225,6 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
       scanIntervalRef.current = null;
     }
 
-    if (zxingReaderRef.current) {
-      try {
-        zxingReaderRef.current.stopAsyncDecode();
-      } catch (e) {}
-      zxingReaderRef.current = null;
-    }
-
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try { track.stop(); } catch (e) {}
@@ -255,45 +267,56 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
   }
 
   async function beginDetectionLoop() {
-    const hasNativeDetector = typeof window.BarcodeDetector !== 'undefined';
+    let nativeDetector = null;
+    let zxingReader = null;
 
-    if (hasNativeDetector) {
-      // ENGINE 1: Hardware-native detector
-      const detector = new window.BarcodeDetector({
-        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
-      });
-
-      scanIntervalRef.current = setInterval(async () => {
-        if (!videoRef.current || videoRef.current.readyState < 2) return;
-
-        try {
-          const barcodes = await detector.detect(videoRef.current);
-          if (barcodes.length > 0 && barcodes[0].rawValue) {
-            handleDetectedBarcode(barcodes[0].rawValue);
-          }
-        } catch (err) {}
-      }, 250);
-    } else {
-      // ENGINE 2: ZXing continuous decoder (does NOT destroy video.srcObject)
-      setScannerStatus('Align barcode within reticle');
+    if (typeof window.BarcodeDetector !== 'undefined') {
       try {
-        const reader = await getZxingReader();
-        zxingReaderRef.current = reader;
-
-        // Use decodeContinuously - preserves live video stream without resetting srcObject
-        reader.decodeContinuously(videoRef.current, (result, err) => {
-          if (result) {
-            const text = result.getText ? result.getText() : result.text;
-            if (text) {
-              handleDetectedBarcode(text);
-            }
-          }
+        nativeDetector = new window.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'],
         });
-      } catch (loadErr) {
-        console.error('[ZXING ERROR]', loadErr);
-        setErrorMessage('Scanner engine failed to load. Please use manual entry or photo scan.');
+      } catch (e) {
+        nativeDetector = null;
       }
     }
+
+    if (!nativeDetector) {
+      try {
+        zxingReader = await getZxingReader();
+        zxingReaderRef.current = zxingReader;
+      } catch (e) {
+        console.error('Failed to load ZXing:', e);
+      }
+    }
+
+    setScannerStatus('Align barcode within reticle');
+
+    // Continuous scanning loop: decodes frames without interrupting video stream
+    let isDecoding = false;
+    scanIntervalRef.current = setInterval(async () => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || video.videoWidth === 0 || isDecoding) return;
+
+      isDecoding = true;
+      try {
+        if (nativeDetector) {
+          const barcodes = await nativeDetector.detect(video);
+          if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+            handleDetectedBarcode(barcodes[0].rawValue);
+          }
+        } else if (zxingReader) {
+          // Single-frame pure decode with TRY_HARDER (never resets srcObject)
+          const result = zxingReader.decode(video);
+          if (result && result.getText && result.getText()) {
+            handleDetectedBarcode(result.getText());
+          }
+        }
+      } catch (err) {
+        // NotFoundException: completely normal when barcode is not in frame yet
+      } finally {
+        isDecoding = false;
+      }
+    }, 180);
   }
 
   function handleDetectedBarcode(barcode) {
@@ -306,6 +329,11 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
     }
 
     lastDetectedRef.current = { code: barcode, time: now };
+
+    // Trigger visual green flash on reticle
+    setScanFlash(true);
+    setTimeout(() => setScanFlash(false), 300);
+
     submitScan(barcode);
   }
 
@@ -341,7 +369,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
 
       if (!detectedCode) {
         const reader = await getZxingReader();
-        const result = await reader.decodeFromImageElement(img);
+        const result = reader.decode(img);
         if (result && result.getText()) {
           detectedCode = result.getText();
         }
@@ -368,7 +396,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
     const cleanCode = barcode.trim();
     setErrorMessage('');
     setUnknownBarcode(null);
-    setScannerStatus(`Scanning ${cleanCode}...`);
+    setScannerStatus(`Scanned: ${cleanCode}`);
 
     const scanId = generateUuid();
 
@@ -393,7 +421,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
     } catch (err) {
       if (err.code === 'UNKNOWN_BARCODE') {
         setUnknownBarcode(cleanCode);
-        setScannerStatus(`Barcode ${cleanCode} not found`);
+        setScannerStatus(`Barcode ${cleanCode} not found in catalog`);
       } else {
         setErrorMessage(err.message || 'Scan processing failed');
         setScannerStatus('Scan failed');
@@ -414,7 +442,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
       <div style={{ marginBottom: '14px' }}>
         <h1 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Scan Product</h1>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-          Scan barcodes using your camera or enter the number manually
+          Hold a barcode in front of the camera or enter the number manually
         </p>
       </div>
 
@@ -466,7 +494,7 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
           position: 'relative',
           overflow: 'hidden',
         }}>
-          {/* Video is always mounted with absolute positioning so browser paints frames seamlessly */}
+          {/* Video element positioned absolutely with smooth opacity */}
           <video
             ref={videoRef}
             playsInline
@@ -487,19 +515,22 @@ function ScanViewComponent({ onNavigateToCart, onNavigateToShop }) {
 
           {cameraActive ? (
             <>
-              {/* Targeting Reticle */}
+              {/* Targeting Reticle with green flash on scan */}
               <div style={{
                 position: 'absolute',
-                width: '230px',
+                width: '240px',
                 height: '140px',
-                border: '2px solid var(--primary)',
+                border: scanFlash ? '3px solid var(--success)' : '2px solid var(--primary)',
                 borderRadius: '8px',
-                boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.45)',
+                boxShadow: scanFlash
+                  ? '0 0 16px var(--success), 0 0 0 9999px rgba(15, 23, 42, 0.45)'
+                  : '0 0 0 9999px rgba(15, 23, 42, 0.45)',
                 pointerEvents: 'none',
                 zIndex: 2,
+                transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
               }}>
                 {/* Animated Sweeping Laser */}
-                <div className="scanner-laser" />
+                <div className="scanner-laser" style={{ backgroundColor: scanFlash ? 'var(--success)' : 'var(--primary)' }} />
               </div>
 
               {/* In-view Camera Toolbar */}
