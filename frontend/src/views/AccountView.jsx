@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { User, Receipt, RotateCcw, Eye, CheckCircle, XCircle } from 'lucide-react';
 import { api } from '../api';
 
-export function AccountView({ onSelectBillToView }) {
+function AccountViewComponent({ onSelectBillToView }) {
   const [purchases, setPurchases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedBill, setSelectedBill] = useState(null);
@@ -223,3 +223,6 @@ export function AccountView({ onSelectBillToView }) {
     </div>
   );
 }
+
+export const AccountView = memo(AccountViewComponent);
+

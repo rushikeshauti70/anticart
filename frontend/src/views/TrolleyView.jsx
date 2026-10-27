@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Play, Pause, Square, RotateCw, Activity, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { TrolleyVisualizer } from '../components/TrolleyVisualizer';
 import { api } from '../api';
 
-export function TrolleyView({
+function TrolleyViewComponent({
   trolleyState,
   events = [],
   onCommandAck,
@@ -324,3 +324,6 @@ export function TrolleyView({
     </div>
   );
 }
+
+export const TrolleyView = memo(TrolleyViewComponent);
+

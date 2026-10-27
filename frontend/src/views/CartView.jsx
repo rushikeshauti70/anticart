@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { Trash2, Plus, Minus, CheckCircle, Printer, ShoppingBag, ArrowRight } from 'lucide-react';
 import { api } from '../api';
 
-export function CartView({ cart, onCartUpdated, onNavigateToShop, onNavigateToScan }) {
+function CartViewComponent({ cart, onCartUpdated, onNavigateToShop, onNavigateToScan }) {
   const [loading, setLoading] = useState(false);
   const [bill, setBill] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
@@ -296,3 +296,6 @@ export function CartView({ cart, onCartUpdated, onNavigateToShop, onNavigateToSc
     </div>
   );
 }
+
+export const CartView = memo(CartViewComponent);
+

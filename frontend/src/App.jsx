@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ShoppingBag, Camera, ShoppingCart, Radio, User, AlertCircle } from 'lucide-react';
 import { ShopView } from './views/ShopView';
 import { ScanView } from './views/ScanView';
@@ -56,21 +56,36 @@ export function App() {
 
   async function loadInitialData() {
     try {
-      // 1. Fetch initial cart
       const cartData = await api.getCart('trolley-01');
       if (cartData) setCart(cartData);
 
-      // 2. Fetch initial trolley state
       const stateData = await api.getTrolleyState('trolley-01');
       if (stateData) setTrolleyState(stateData);
 
-      // 3. Fetch initial events
       const eventsData = await api.getTrolleyEvents('trolley-01', { page: 1, pageSize: 20 });
       if (eventsData?.data) setTrolleyEvents(eventsData.data);
     } catch (err) {
       console.warn('Initial data load warning:', err.message);
     }
   }
+
+  // Stable memoized callbacks to prevent child component re-renders
+  const navigateToShop = useCallback(() => setActiveTab('shop'), []);
+  const navigateToScan = useCallback(() => setActiveTab('scan'), []);
+  const navigateToCart = useCallback(() => setActiveTab('cart'), []);
+
+  const handleCartUpdated = useCallback((updatedCart) => {
+    setCart(updatedCart);
+  }, []);
+
+  const handleCommandAck = useCallback((ack) => {
+    setTrolleyEvents((prev) => [{
+      event: 'COMMAND_ACK',
+      severity: ack.status === 'executed' ? 'info' : 'warning',
+      message: `${ack.type || 'Command'}: ${ack.status} (${ack.reason || 'acknowledged'})`,
+      received_at: new Date().toISOString(),
+    }, ...prev]);
+  }, []);
 
   // Derive top connection indicator
   const displayStatus = trolleyState?.connection || connectionStatus;
@@ -91,7 +106,6 @@ export function App() {
           </div>
 
           <div className="header-actions">
-            {/* Connection Status Pill */}
             <div className="connection-pill" title={`Trolley state: ${displayStatus}`}>
               <span className={`pill-dot status-${displayStatus}`} />
               <span style={{ textTransform: 'capitalize' }}>{displayStatus}</span>
@@ -103,7 +117,7 @@ export function App() {
         <nav className="nav-bar">
           <button
             className={`nav-item ${activeTab === 'shop' ? 'active' : ''}`}
-            onClick={() => setActiveTab('shop')}
+            onClick={navigateToShop}
           >
             <ShoppingBag size={18} />
             <span>Shop</span>
@@ -111,7 +125,7 @@ export function App() {
 
           <button
             className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
-            onClick={() => setActiveTab('scan')}
+            onClick={navigateToScan}
           >
             <Camera size={18} />
             <span>Scan</span>
@@ -119,7 +133,7 @@ export function App() {
 
           <button
             className={`nav-item ${activeTab === 'cart' ? 'active' : ''}`}
-            onClick={() => setActiveTab('cart')}
+            onClick={navigateToCart}
           >
             <ShoppingCart size={18} />
             <span>Cart</span>
@@ -167,26 +181,22 @@ export function App() {
       {/* Main Content Area */}
       <main className="app-main">
         {activeTab === 'shop' && (
-          <ShopView
-            onSelectBarcodeForScan={(barcode) => {
-              setActiveTab('scan');
-            }}
-          />
+          <ShopView onSelectBarcodeForScan={navigateToScan} />
         )}
 
         {activeTab === 'scan' && (
           <ScanView
-            onNavigateToCart={() => setActiveTab('cart')}
-            onNavigateToShop={() => setActiveTab('shop')}
+            onNavigateToCart={navigateToCart}
+            onNavigateToShop={navigateToShop}
           />
         )}
 
         {activeTab === 'cart' && (
           <CartView
             cart={cart}
-            onCartUpdated={(updatedCart) => setCart(updatedCart)}
-            onNavigateToShop={() => setActiveTab('shop')}
-            onNavigateToScan={() => setActiveTab('scan')}
+            onCartUpdated={handleCartUpdated}
+            onNavigateToShop={navigateToShop}
+            onNavigateToScan={navigateToScan}
           />
         )}
 
@@ -194,14 +204,7 @@ export function App() {
           <TrolleyView
             trolleyState={trolleyState}
             events={trolleyEvents}
-            onCommandAck={(ack) => {
-              setTrolleyEvents((prev) => [{
-                event: 'COMMAND_ACK',
-                severity: ack.status === 'executed' ? 'info' : 'warning',
-                message: `${ack.type || 'Command'}: ${ack.status} (${ack.reason || 'acknowledged'})`,
-                received_at: new Date().toISOString(),
-              }, ...prev]);
-            }}
+            onCommandAck={handleCommandAck}
           />
         )}
 
@@ -212,3 +215,4 @@ export function App() {
     </div>
   );
 }
+

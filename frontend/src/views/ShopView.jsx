@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Search, Plus, Upload, Trash2, Edit2, AlertCircle } from 'lucide-react';
 import { api } from '../api';
 
@@ -12,7 +12,7 @@ const CATEGORIES = [
   'Stationery',
 ];
 
-export function ShopView({ onSelectBarcodeForScan }) {
+function ShopViewComponent({ onSelectBarcodeForScan }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -431,3 +431,6 @@ export function ShopView({ onSelectBarcodeForScan }) {
     </div>
   );
 }
+
+export const ShopView = memo(ShopViewComponent);
+
