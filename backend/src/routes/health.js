@@ -4,7 +4,7 @@ import { config } from '../config.js';
 
 export const healthRouter = Router();
 
-healthRouter.get('/health', (req, res) => {
+healthRouter.get(['/health', '/api/health'], (req, res) => {
   const isSupabaseConfigured = Boolean(config.supabase.url && config.supabase.serviceRoleKey);
 
   res.status(200).json({
