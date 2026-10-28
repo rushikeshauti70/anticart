@@ -117,7 +117,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
 
   // Hardware controls
   const [availableCameras, setAvailableCameras] = useState([]);
-  const [selectedCameraIndex, setSelectedCameraIndex] = useState(0);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
@@ -158,6 +158,13 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       const videoInputs = devices.filter((d) => d.kind === 'videoinput');
       if (isMountedRef.current && videoInputs.length > 0) {
         setAvailableCameras(videoInputs);
+        if (!selectedCameraId && streamRef.current) {
+          const track = streamRef.current.getVideoTracks()[0];
+          const settings = track?.getSettings?.();
+          if (settings?.deviceId) {
+            setSelectedCameraId(settings.deviceId);
+          }
+        }
       }
     } catch (e) {}
   }
@@ -183,26 +190,43 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
         throw new Error('Camera access not supported by browser. Please use manual entry.');
       }
 
-      // Progressive constraint acquisition: Tier 1 environment camera with continuous focus
+      const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator?.userAgent || '');
       let stream = null;
-      try {
-        const constraints = {
-          video: targetDeviceId
-            ? { deviceId: { exact: targetDeviceId } }
-            : {
-                facingMode: { ideal: 'environment' },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-              },
-          audio: false,
-        };
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (err1) {
-        // Tier 2 universal fallback
+
+      if (targetDeviceId) {
+        // Explicitly selected device
         stream = await navigator.mediaDevices.getUserMedia({
-          video: targetDeviceId ? { deviceId: { exact: targetDeviceId } } : true,
+          video: { deviceId: { exact: targetDeviceId } },
           audio: false,
         });
+        setSelectedCameraId(targetDeviceId);
+      } else if (isMobile) {
+        // Mobile device: prioritize rear environment camera for barcodes
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          });
+        } catch (eMobile) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+      } else {
+        // Desktop / Laptop: use default webcam directly without environment facingMode constraint
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          });
+        } catch (eDesk) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
       }
 
       if (!isMountedRef.current) {
@@ -756,16 +780,28 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
             Status: <span style={{ fontWeight: 600, color: 'var(--text)' }}>{scannerStatus}</span>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {/* Camera Switcher (if multiple cameras detected) */}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Camera Select Dropdown (if multiple cameras detected) */}
             {cameraActive && availableCameras.length > 1 && (
-              <button
-                className="btn btn-sm"
-                onClick={handleSwitchCamera}
-                title="Switch between available cameras"
-              >
-                <RefreshCw size={14} /> Switch Camera
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <select
+                  className="input"
+                  style={{ maxWidth: '170px', padding: '3px 6px', fontSize: '0.78rem', height: '28px' }}
+                  value={selectedCameraId}
+                  onChange={(e) => {
+                    const devId = e.target.value;
+                    setSelectedCameraId(devId);
+                    startCamera(devId);
+                  }}
+                  title="Select video input device"
+                >
+                  {availableCameras.map((cam, idx) => (
+                    <option key={cam.deviceId || idx} value={cam.deviceId}>
+                      {cam.label || `Camera ${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
 
             {/* Torch toggle button (visible if supported) */}
@@ -804,6 +840,12 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
             )}
           </div>
         </div>
+
+        {cameraActive && (
+          <div style={{ padding: '6px 16px 10px', fontSize: '0.75rem', color: 'var(--text-muted)', borderTop: '1px dashed var(--border)', backgroundColor: 'var(--surface)' }}>
+            💡 Tip: If camera preview is black, check that your laptop's physical webcam privacy slider is slid open, or select your camera from the dropdown above.
+          </div>
+        )}
       </div>
 
       {/* Manual Barcode Entry Card */}
