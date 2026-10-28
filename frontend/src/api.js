@@ -1,8 +1,13 @@
 // API client and Server-Sent Events stream manager
+// Defaults to the production Render backend when deployed on Vercel, and relative in local development
+
+const RENDER_BACKEND_URL = 'https://avcoe-smart-trolley-backend.onrender.com';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL.replace(/\/$/, '')
-  : '';
+  : (typeof window !== 'undefined' && window.location.hostname && !['localhost', '127.0.0.1'].includes(window.location.hostname))
+    ? RENDER_BACKEND_URL
+    : '';
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;

@@ -116,6 +116,8 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
   const [scanFlash, setScanFlash] = useState(false);
 
   // Hardware controls
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [selectedCameraIndex, setSelectedCameraIndex] = useState(0);
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
@@ -132,13 +134,35 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
 
   useEffect(() => {
     isMountedRef.current = true;
+    updateAvailableCameras();
     return () => {
       isMountedRef.current = false;
       stopCamera();
     };
   }, []);
 
-  async function startCamera() {
+  // Guaranteed synchronization between active camera stream and the video element
+  useEffect(() => {
+    if (cameraActive && streamRef.current && videoRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
+      videoRef.current.play().catch((e) => console.warn('[CAMERA] Play sync note:', e.message));
+    }
+  }, [cameraActive]);
+
+  async function updateAvailableCameras() {
+    if (!navigator?.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+      if (isMountedRef.current && videoInputs.length > 0) {
+        setAvailableCameras(videoInputs);
+      }
+    } catch (e) {}
+  }
+
+  async function startCamera(targetDeviceId = null) {
     if (isStarting) return;
     setIsStarting(true);
     setErrorMessage('');
@@ -146,7 +170,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     setAiSuggestion(null);
     setScannerStatus('Opening camera...');
 
-    // Clean up any stale streams
+    // Clean up any existing stream cleanly
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         try { track.stop(); } catch (e) {}
@@ -162,18 +186,21 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       // Progressive constraint acquisition: Tier 1 environment camera with continuous focus
       let stream = null;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
-          },
+        const constraints = {
+          video: targetDeviceId
+            ? { deviceId: { exact: targetDeviceId } }
+            : {
+                facingMode: { ideal: 'environment' },
+                width: { ideal: 1280, min: 640 },
+                height: { ideal: 720, min: 480 },
+              },
           audio: false,
-        });
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (err1) {
         // Tier 2 universal fallback
         stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: targetDeviceId ? { deviceId: { exact: targetDeviceId } } : true,
           audio: false,
         });
       }
@@ -191,7 +218,6 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
         const caps = videoTrack.getCapabilities();
         setTorchSupported(Boolean(caps.torch));
 
-        // Request continuous autofocus if supported by camera
         const advanced = [];
         if (caps.focusMode && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
           advanced.push({ focusMode: 'continuous' });
@@ -206,16 +232,26 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       }
       setTorchOn(false);
 
-      if (videoRef.current) {
-        videoRef.current.setAttribute('playsinline', 'true');
-        videoRef.current.setAttribute('autoplay', 'true');
-        videoRef.current.setAttribute('muted', 'true');
-        videoRef.current.playsInline = true;
-        videoRef.current.muted = true;
-        videoRef.current.srcObject = stream;
+      // Attach stream to permanently mounted video element
+      const video = videoRef.current;
+      if (video) {
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('autoplay', 'true');
+        video.setAttribute('muted', 'true');
+        video.playsInline = true;
+        video.muted = true;
+        video.srcObject = stream;
+
+        video.onloadedmetadata = async () => {
+          try {
+            await video.play();
+          } catch (e) {
+            console.warn('[CAMERA] Auto-play gesture warning:', e.message);
+          }
+        };
 
         try {
-          await videoRef.current.play();
+          await video.play();
         } catch (playErr) {
           console.warn('[CAMERA] Auto-play waiting for user gesture:', playErr.message);
         }
@@ -224,6 +260,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       setCameraActive(true);
       setIsStarting(false);
       setScannerStatus('Align barcode within reticle');
+      updateAvailableCameras();
       beginDetectionLoop();
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -255,6 +292,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     }
 
     if (videoRef.current) {
+      try { videoRef.current.pause(); } catch (e) {}
       videoRef.current.srcObject = null;
     }
 
@@ -263,6 +301,14 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     setTorchOn(false);
     setTorchSupported(false);
     setScannerStatus('Camera idle');
+  }
+
+  async function handleSwitchCamera() {
+    if (availableCameras.length <= 1) return;
+    const nextIndex = (selectedCameraIndex + 1) % availableCameras.length;
+    setSelectedCameraIndex(nextIndex);
+    const nextCamera = availableCameras[nextIndex];
+    await startCamera(nextCamera.deviceId);
   }
 
   async function handleToggleTorch() {
@@ -293,7 +339,6 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       }
     }
 
-    // Pre-load ZXing software fallback
     let zxingModule = null;
     try {
       zxingModule = await getZxingModule();
@@ -317,7 +362,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
 
-        // Crop the central 70% width and 50% height (matching the visual reticle)
+        // Crop central 70% width and 50% height (matching the visual reticle)
         const cropW = Math.floor(vw * 0.70);
         const cropH = Math.floor(vh * 0.50);
         const cropX = Math.floor((vw - cropW) / 2);
@@ -389,7 +434,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       }
     }
 
-    // Step 3: 1.5s Cooldown Debounce for the exact same physical barcode
+    // Step 2: 1.5s Cooldown Debounce for the exact same physical barcode
     const last = lastDetectedRef.current;
     if (last.code === cleanCode && now - last.time < 1500) {
       return;
@@ -397,7 +442,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
 
     lastDetectedRef.current = { code: cleanCode, time: now };
 
-    // Step 4: POS Sensory Feedback
+    // Step 3: POS Sensory Feedback
     playPosChime();
     triggerHaptic();
     setScanFlash(true);
@@ -467,12 +512,10 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     setScannerStatus('Analyzing package with Gemini AI...');
 
     try {
-      // Capture frame from video onto an offscreen canvas
       const snapCanvas = document.createElement('canvas');
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 480;
 
-      // Keep aspect ratio with max dimension 1024 for fast transfer
       const maxDim = 1024;
       const scale = Math.min(1, maxDim / Math.max(vw, vh));
       snapCanvas.width = Math.floor(vw * scale);
@@ -621,66 +664,74 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       <div className="card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
         <div style={{
           backgroundColor: '#0F172A',
-          height: 'min(55vh, 380px)',
+          height: 'min(55vh, 400px)',
           minHeight: '280px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           position: 'relative',
+          overflow: 'hidden',
+          borderRadius: 'var(--radius)',
         }}>
+          {/* Always mounted video element guaranteeing non-null ref and instant stream attachment */}
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            autoPlay
+            onLoadedMetadata={(e) => {
+              try { e.target.play(); } catch (err) {}
+            }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              opacity: cameraActive ? 1 : 0,
+              pointerEvents: cameraActive ? 'auto' : 'none',
+              zIndex: 1,
+              transition: 'opacity 0.2s ease',
+            }}
+          />
+
           {cameraActive ? (
-            <>
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                autoPlay
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                }}
-              />
+            /* Centered High-Precision Targeting Reticle */
+            <div style={{
+              position: 'relative',
+              width: '74%',
+              maxWidth: '380px',
+              height: '170px',
+              border: scanFlash ? '3px solid var(--success)' : '2px dashed rgba(56, 189, 248, 0.75)',
+              borderRadius: '12px',
+              boxShadow: scanFlash
+                ? '0 0 24px var(--success), 0 0 0 9999px rgba(15, 23, 42, 0.55)'
+                : '0 0 0 9999px rgba(15, 23, 42, 0.50)',
+              pointerEvents: 'none',
+              zIndex: 2,
+              transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              {/* 4 Corner Markers */}
+              <div style={{ position: 'absolute', top: '-2px', left: '-2px', width: '22px', height: '22px', borderTop: '3px solid #38BDF8', borderLeft: '3px solid #38BDF8', borderTopLeftRadius: '12px' }} />
+              <div style={{ position: 'absolute', top: '-2px', right: '-2px', width: '22px', height: '22px', borderTop: '3px solid #38BDF8', borderRight: '3px solid #38BDF8', borderTopRightRadius: '12px' }} />
+              <div style={{ position: 'absolute', bottom: '-2px', left: '-2px', width: '22px', height: '22px', borderBottom: '3px solid #38BDF8', borderLeft: '3px solid #38BDF8', borderBottomLeftRadius: '12px' }} />
+              <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '22px', height: '22px', borderBottom: '3px solid #38BDF8', borderRight: '3px solid #38BDF8', borderBottomRightRadius: '12px' }} />
 
-              {/* Centered High-Precision Targeting Reticle */}
+              {/* Center Aiming Guide Line */}
               <div style={{
-                position: 'relative',
-                width: '74%',
-                maxWidth: '380px',
-                height: '170px',
-                border: scanFlash ? '3px solid var(--success)' : '2px dashed rgba(56, 189, 248, 0.75)',
-                borderRadius: '12px',
-                boxShadow: scanFlash
-                  ? '0 0 24px var(--success), 0 0 0 9999px rgba(15, 23, 42, 0.55)'
-                  : '0 0 0 9999px rgba(15, 23, 42, 0.50)',
-                pointerEvents: 'none',
-                zIndex: 2,
-                transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                {/* 4 Corner Markers */}
-                <div style={{ position: 'absolute', top: '-2px', left: '-2px', width: '22px', height: '22px', borderTop: '3px solid #38BDF8', borderLeft: '3px solid #38BDF8', borderTopLeftRadius: '12px' }} />
-                <div style={{ position: 'absolute', top: '-2px', right: '-2px', width: '22px', height: '22px', borderTop: '3px solid #38BDF8', borderRight: '3px solid #38BDF8', borderTopRightRadius: '12px' }} />
-                <div style={{ position: 'absolute', bottom: '-2px', left: '-2px', width: '22px', height: '22px', borderBottom: '3px solid #38BDF8', borderLeft: '3px solid #38BDF8', borderBottomLeftRadius: '12px' }} />
-                <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '22px', height: '22px', borderBottom: '3px solid #38BDF8', borderRight: '3px solid #38BDF8', borderBottomRightRadius: '12px' }} />
-
-                {/* Center Aiming Guide Line */}
-                <div style={{
-                  width: '85%',
-                  height: '2px',
-                  backgroundColor: scanFlash ? 'var(--success)' : 'var(--primary)',
-                  boxShadow: '0 0 8px var(--primary)',
-                  opacity: 0.9,
-                }} />
-              </div>
-            </>
+                width: '85%',
+                height: '2px',
+                backgroundColor: scanFlash ? 'var(--success)' : 'var(--primary)',
+                boxShadow: '0 0 8px var(--primary)',
+                opacity: 0.9,
+              }} />
+            </div>
           ) : (
-            <div style={{ textAlign: 'center', color: '#94A3B8', padding: '24px' }}>
+            <div style={{ textAlign: 'center', color: '#94A3B8', padding: '24px', zIndex: 2 }}>
               <Camera size={44} style={{ marginBottom: '10px', opacity: 0.6 }} />
               <div style={{ fontSize: '0.95rem', fontWeight: 600 }}>Camera is currently off</div>
               <p style={{ fontSize: '0.8rem', marginTop: '4px', maxWidth: '320px', margin: '4px auto 0' }}>
@@ -706,6 +757,17 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
           </div>
 
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {/* Camera Switcher (if multiple cameras detected) */}
+            {cameraActive && availableCameras.length > 1 && (
+              <button
+                className="btn btn-sm"
+                onClick={handleSwitchCamera}
+                title="Switch between available cameras"
+              >
+                <RefreshCw size={14} /> Switch Camera
+              </button>
+            )}
+
             {/* Torch toggle button (visible if supported) */}
             {cameraActive && torchSupported && (
               <button
@@ -736,7 +798,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
                 <CameraOff size={14} /> Stop Camera
               </button>
             ) : (
-              <button className="btn btn-sm btn-primary" onClick={startCamera} disabled={isStarting}>
+              <button className="btn btn-sm btn-primary" onClick={() => startCamera()} disabled={isStarting}>
                 <Camera size={14} /> {isStarting ? 'Starting...' : 'Start Camera'}
               </button>
             )}
