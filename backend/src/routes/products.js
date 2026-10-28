@@ -183,22 +183,37 @@ Respond ONLY with a valid JSON object with keys:
 "price": estimated numeric price in INR (e.g. 30),
 "gst_percent": standard Indian GST rate (0, 5, 12, 18, or 28).`;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.googleApiKey}`;
-    const response = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' },
-      }),
-    });
+    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
+    let geminiResponse = null;
 
-    if (!response.ok) {
-      console.warn(`[AI LOOKUP] Gemini API returned status ${response.status}`);
+    for (const modelName of candidateModels) {
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${config.googleApiKey}`;
+      try {
+        const resp = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: 'application/json' },
+          }),
+        });
+
+        if (resp.ok) {
+          geminiResponse = resp;
+          break;
+        } else {
+          console.warn(`[AI LOOKUP] Model ${modelName} returned status ${resp.status}`);
+        }
+      } catch (callErr) {
+        console.warn(`[AI LOOKUP] Model ${modelName} error:`, callErr.message);
+      }
+    }
+
+    if (!geminiResponse) {
       return res.json({ configured: true, suggestion: null });
     }
 
-    const data = await response.json();
+    const data = await geminiResponse.json();
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawText) {
       return res.json({ configured: true, suggestion: null });

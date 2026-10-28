@@ -228,44 +228,57 @@ Respond ONLY with a valid JSON object matching this exact schema:
   "confidence": number between 0.0 and 1.0
 }`;
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
+    let geminiResponse = null;
+    let lastErrorText = '';
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8500);
+    for (const modelName of candidateModels) {
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8500);
 
-    let geminiResponse;
-    try {
-      geminiResponse = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType,
-                    data: rawBase64,
+      try {
+        const resp = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  { text: prompt },
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: rawBase64,
+                    }
                   }
-                }
-              ]
+                ]
+              }
+            ],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
             }
-          ],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          }
-        })
-      });
-    } finally {
-      clearTimeout(timeout);
+          })
+        });
+
+        if (resp.ok) {
+          geminiResponse = resp;
+          break;
+        } else {
+          lastErrorText = await resp.text().catch(() => '');
+          console.warn(`[GEMINI VISION] Model ${modelName} returned status ${resp.status}: ${lastErrorText}`);
+        }
+      } catch (errCall) {
+        console.warn(`[GEMINI VISION] Model ${modelName} request error:`, errCall.message);
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
-    if (!geminiResponse.ok) {
-      const errText = await geminiResponse.text().catch(() => '');
-      console.warn(`[GEMINI VISION] API status ${geminiResponse.status}: ${errText}`);
+    if (!geminiResponse) {
+      console.warn(`[GEMINI VISION] All candidate models failed. Last error: ${lastErrorText}`);
       return res.status(502).json({
         error: { code: 'AI_SERVICE_ERROR', message: 'Vision service temporarily unavailable. Please retry or enter barcode manually.' }
       });
