@@ -58,6 +58,8 @@ export const api = {
   getCart: (trolleyId = 'trolley-01') => request(`/api/cart?trolleyId=${trolleyId}`),
   scanBarcode: ({ barcode, scanId, trolleyId = 'trolley-01' }) =>
     request('/api/scan', { method: 'POST', body: JSON.stringify({ barcode, scanId, trolleyId }) }),
+  geminiVisionScan: ({ imageBase64, trolleyId = 'trolley-01', hint = '' }) =>
+    request('/api/scanner/gemini-vision', { method: 'POST', body: JSON.stringify({ imageBase64, trolleyId, hint }) }),
   updateCartItemQuantity: ({ productId, quantity, trolleyId = 'trolley-01' }) =>
     request(`/api/cart/items/${productId}`, { method: 'PATCH', body: JSON.stringify({ quantity, trolleyId }) }),
   removeCartItem: ({ productId, trolleyId = 'trolley-01' }) =>

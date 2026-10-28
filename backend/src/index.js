@@ -35,8 +35,8 @@ app.use(cors({
   credentials: true,
 }));
 
-// Body parsing with size limits
-app.use(express.json({ limit: '64kb' }));
+// Body parsing with size limits (supports base64 image frames for AI vision)
+app.use(express.json({ limit: '4mb' }));
 app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '512kb' }));
 
 // Optional Supabase JWT Auth via JWKS
