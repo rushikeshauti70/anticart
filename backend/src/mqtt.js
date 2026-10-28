@@ -319,7 +319,7 @@ class MqttManager {
   }
 
   async sendCommand(deviceId, commandType, timeoutMs = 5000) {
-    const allowedCommands = ['PAUSE', 'RESUME', 'STOP', 'REQUEST_STATUS'];
+    const allowedCommands = ['PAUSE', 'RESUME', 'START', 'STOP', 'REQUEST_STATUS'];
     if (!allowedCommands.includes(commandType)) {
       const err = new Error(`Invalid command type: ${commandType}`);
       err.code = 'INVALID_COMMAND';

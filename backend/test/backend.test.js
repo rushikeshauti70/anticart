@@ -2,7 +2,7 @@ import assert from 'assert';
 import http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 
-const BASE_URL = 'http://localhost:5000';
+const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:5000';
 
 async function request(path, options = {}) {
   const url = `${BASE_URL}${path}`;

@@ -172,9 +172,9 @@ export function TrolleyView({
               <button
                 className="btn btn-primary"
                 disabled={commandInProgress}
-                onClick={() => handleSendCommand('RESUME')}
+                onClick={() => handleSendCommand('START')}
               >
-                <Play size={15} /> Resume
+                <Play size={15} /> Start / Resume
               </button>
 
               <button

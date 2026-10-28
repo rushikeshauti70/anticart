@@ -6,7 +6,7 @@ import { db } from '../db.js';
 export const trolleyRouter = Router();
 
 const commandSchema = z.object({
-  type: z.enum(['PAUSE', 'RESUME', 'STOP', 'REQUEST_STATUS']),
+  type: z.enum(['PAUSE', 'RESUME', 'START', 'STOP', 'REQUEST_STATUS']),
   timeoutMs: z.coerce.number().min(1000).max(15000).default(5000),
 });
 
