@@ -438,27 +438,30 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     const cleanCode = barcode.trim();
     if (!cleanCode) return;
 
-    // Step 1: EAN-13 / UPC-A Checksum Validation & Consecutive Read Guard
+    // Step 1: Strict Checksum Validation
+    // EAN-13, EAN-8, UPC-A, UPC-E modulo-10 checksum validation
     const isEanUpc = /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(cleanCode);
-    const hasValidChecksum = isEanUpc ? validateEanUpcChecksum(cleanCode) : true;
-    const now = Date.now();
-
-    // If barcode is non-checksummed (Code 128 / Code 39) OR has custom non-GS1 format,
-    // require 2 consecutive matching reads within 400ms to eliminate optical noise.
-    if (!hasValidChecksum || !isEanUpc) {
-      const cr = consecutiveReadRef.current;
-      if (cr.code === cleanCode && now - cr.time < 400) {
-        cr.count += 1;
-      } else {
-        consecutiveReadRef.current = { code: cleanCode, count: 1, time: now };
-        return; // Wait for consecutive confirmation read
-      }
-      if (consecutiveReadRef.current.count < 2) {
-        return;
-      }
+    if (isEanUpc && !validateEanUpcChecksum(cleanCode)) {
+      // Reject corrupted digit read immediately
+      return;
     }
 
-    // Step 2: 1.5s Cooldown Debounce for the exact same physical barcode
+    // Step 2: Two-Frame Confirmation Guard
+    // Requires 2 consecutive matching reads within 500ms for ALL codes
+    // Eliminates optical noise, rolling-shutter aliasing, and phone screen flicker
+    const now = Date.now();
+    const cr = consecutiveReadRef.current;
+    if (cr.code === cleanCode && now - cr.time < 500) {
+      cr.count += 1;
+    } else {
+      consecutiveReadRef.current = { code: cleanCode, count: 1, time: now };
+      return;
+    }
+    if (cr.count < 2) {
+      return;
+    }
+
+    // Step 3: 1.5s Cooldown Debounce for the exact same physical barcode
     const last = lastDetectedRef.current;
     if (last.code === cleanCode && now - last.time < 1500) {
       return;
@@ -466,7 +469,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
 
     lastDetectedRef.current = { code: cleanCode, time: now };
 
-    // Step 3: POS Sensory Feedback
+    // Step 4: POS Sensory Feedback
     playPosChime();
     triggerHaptic();
     setScanFlash(true);

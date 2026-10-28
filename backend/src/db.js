@@ -77,8 +77,10 @@ class MemoryStore {
 
   async getProductByBarcode(barcode) {
     for (const p of this.products.values()) {
-      if (p.barcode === barcode && p.active !== false) {
-        return p;
+      if (p.active !== false) {
+        if (p.barcode === barcode) return p;
+        if (barcode.length === 12 && p.barcode === '0' + barcode) return p;
+        if (barcode.length === 13 && barcode.startsWith('0') && p.barcode === barcode.slice(1)) return p;
       }
     }
     return null;
@@ -540,7 +542,7 @@ class SupabaseStore {
     const cached = productCache.get(barcode);
     if (cached) return cached;
 
-    const { data, error } = await this.supabase
+    let { data, error } = await this.supabase
       .from('products')
       .select('*')
       .eq('barcode', barcode)
@@ -548,6 +550,31 @@ class SupabaseStore {
       .maybeSingle();
 
     if (error) throw error;
+
+    // UPC-A / EAN-13 normalization:
+    // If 12-digit UPC-A, also check 13-digit EAN-13 padded with leading 0
+    if (!data && barcode.length === 12) {
+      const ean13 = '0' + barcode;
+      const res = await this.supabase
+        .from('products')
+        .select('*')
+        .eq('barcode', ean13)
+        .eq('active', true)
+        .maybeSingle();
+      if (!res.error && res.data) data = res.data;
+    }
+    // If 13-digit EAN-13 with leading 0, also check 12-digit UPC-A
+    if (!data && barcode.length === 13 && barcode.startsWith('0')) {
+      const upcA = barcode.slice(1);
+      const res = await this.supabase
+        .from('products')
+        .select('*')
+        .eq('barcode', upcA)
+        .eq('active', true)
+        .maybeSingle();
+      if (!res.error && res.data) data = res.data;
+    }
+
     if (data) productCache.set(barcode, data);
     return data;
   }
