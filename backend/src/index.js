@@ -22,15 +22,15 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
-    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    if (!origin) return callback(null, true);
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes(cleanOrigin) || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
-    // Allow vercel preview deployments if matching pattern
-    if (origin.endsWith('.vercel.app')) {
+    if (cleanOrigin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
-    return callback(null, true); // Permissive in dev, logged in headers
+    return callback(null, true);
   },
   credentials: true,
 }));

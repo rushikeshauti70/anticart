@@ -18,7 +18,7 @@ function getCaCert() {
 
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
-  frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
+  frontendOrigin: (process.env.FRONTEND_ORIGIN || '*').trim().replace(/\/+$/, ''),
   supabase: {
     url: process.env.SUPABASE_URL || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',
