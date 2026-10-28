@@ -184,8 +184,8 @@ constexpr uint32_t LOG_INTERVAL_MS = 150;
 
 // ============================ 4. SHARED (CORE 1 <-> CORE 0) ============================
 // Remote-control state, written by the network task, read by the driving loop.
-volatile bool    motorsEnabled = true;
-volatile uint8_t opMode = 0;                       // index into MODE_NAMES
+volatile bool    motorsEnabled = false;
+volatile uint8_t opMode = 1;                       // index into MODE_NAMES (1 = PAUSED/Standby)
 const char* const MODE_NAMES[] = {"LINE_FOLLOW", "PAUSED", "STOPPED"};
 
 // Sensor snapshot, written by the driving loop, read by the network task.
@@ -373,7 +373,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     publishStatus("online");
     publishTelemetry();
   }
-  else if (strcmp(type, "RESUME") == 0) {
+  else if (strcmp(type, "RESUME") == 0 || strcmp(type, "START") == 0) {
     bool obstacle;
     portENTER_CRITICAL(&snapMux);
     obstacle = snap.obstacle;
@@ -384,7 +384,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else {
       opMode = 0;
       motorsEnabled = true;     // driving loop re-centres servo and restarts FOLLOW
-      publishCommandAck(commandId, "executed", "Line following resumed");
+      publishCommandAck(commandId, "executed", "Trolley started with website permission");
       publishStatus("online");
       publishTelemetry();
     }
@@ -488,7 +488,7 @@ void networkTask(void* arg) {
       }
 
       // Valid UTC time is required for the server's clock-skew checks
-      if (timeIsValid()) {
+      if (timeIsValid() || (now > 15000)) {
         if (!client.connected()) {
           if (now - lastMqttTry >= MQTT_RETRY_MS) {
             lastMqttTry = now;
@@ -1164,10 +1164,10 @@ void setup() {
   servoAngle = SERVO_CENTER;
   servoReadyMs = millis();
 
-  Serial.println("Trolley ready. Starting in 2 s - place it on the track.");
-  delay(2000);
+  Serial.println("Trolley ready in Standby. Waiting for START permission from website...");
+  stopNow();
 
-  setState(ST_FOLLOW);
+  wasParked = true;
 }
 
 void loop() {
