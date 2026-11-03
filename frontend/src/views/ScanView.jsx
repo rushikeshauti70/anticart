@@ -370,10 +370,8 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       console.warn('[SCANNER] ZXing load note:', e.message);
     }
 
-    // Dedicated offscreen canvas for centered reticle cropping (640x360)
+    // Dedicated offscreen canvas for centered reticle cropping (dynamic 1:1 aspect ratio)
     const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = 640;
-    cropCanvas.height = 360;
     const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
 
     let isDecoding = false;
@@ -386,22 +384,34 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
 
-        // Crop central 70% width and 50% height (matching the visual reticle)
-        const cropW = Math.floor(vw * 0.70);
-        const cropH = Math.floor(vh * 0.50);
+        // Crop central 75% width and 55% height (matching the visual reticle)
+        const cropW = Math.max(1, Math.floor(vw * 0.75));
+        const cropH = Math.max(1, Math.floor(vh * 0.55));
         const cropX = Math.floor((vw - cropW) / 2);
         const cropY = Math.floor((vh - cropH) / 2);
 
-        cropCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, 640, 360);
+        // Keep 1:1 pixel aspect ratio without any non-uniform scaling/stretching
+        if (cropCanvas.width !== cropW || cropCanvas.height !== cropH) {
+          cropCanvas.width = cropW;
+          cropCanvas.height = cropH;
+        }
+        cropCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
         let detectedCode = null;
 
-        // Stage 1: Hardware-accelerated native detector on crop canvas
+        // Stage 1: Hardware-accelerated native detector directly on video or crop canvas
         if (nativeDetector) {
           try {
+            // First try high-speed cropped region
             const results = await nativeDetector.detect(cropCanvas);
             if (results && results.length > 0 && results[0].rawValue) {
               detectedCode = results[0].rawValue;
+            } else {
+              // Fallback to full video frame if angled/partial
+              const fullResults = await nativeDetector.detect(video);
+              if (fullResults && fullResults.length > 0 && fullResults[0].rawValue) {
+                detectedCode = fullResults[0].rawValue;
+              }
             }
           } catch (e) {}
         }
@@ -633,7 +643,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
             This item does not exist in the store catalog yet.
           </p>
           <div style={{ display: 'flex', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
-            <button className="btn btn-sm btn-primary" onClick={onNavigateToShop}>
+            <button className="btn btn-sm btn-primary" onClick={() => onNavigateToShop?.(unknownBarcode)}>
               <Plus size={13} /> Add to Catalog
             </button>
             <button className="btn btn-sm" onClick={handleAiVisionScan} disabled={isAiScanning || !cameraActive}>
@@ -675,7 +685,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
                   Confirm & Add to Cart
                 </button>
               ) : (
-                <button className="btn btn-sm btn-primary" onClick={onNavigateToShop}>
+                <button className="btn btn-sm btn-primary" onClick={() => onNavigateToShop?.(aiSuggestion?.barcode)}>
                   <Plus size={13} /> Add to Catalog
                 </button>
               )}

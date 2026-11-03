@@ -12,7 +12,7 @@ const CATEGORIES = [
   'Stationery',
 ];
 
-export function ShopView({ onSelectBarcodeForScan }) {
+export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearInitialBarcode }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -30,6 +30,15 @@ export function ShopView({ onSelectBarcodeForScan }) {
   const [formPrice, setFormPrice] = useState('');
   const [formGst, setFormGst] = useState('5.0');
   const [formStock, setFormStock] = useState('');
+
+  useEffect(() => {
+    if (initialBarcodeToAdd) {
+      setFormBarcode(initialBarcodeToAdd);
+      setEditingProduct(null);
+      setShowAddModal(true);
+      onClearInitialBarcode?.();
+    }
+  }, [initialBarcodeToAdd]);
 
   // Import state
   const [importCsv, setImportCsv] = useState('');

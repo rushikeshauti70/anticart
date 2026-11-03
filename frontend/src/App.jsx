@@ -14,6 +14,7 @@ export function App() {
   const [trolleyEvents, setTrolleyEvents] = useState([]);
   const [cart, setCart] = useState({ items: [], subtotal: 0, gst_total: 0, total: 0, item_count: 0 });
   const [bannerAlert, setBannerAlert] = useState(null);
+  const [prefilledBarcodeForShop, setPrefilledBarcodeForShop] = useState('');
 
   // Initialize data on mount
   useEffect(() => {
@@ -168,6 +169,8 @@ export function App() {
       <main className="app-main">
         {activeTab === 'shop' && (
           <ShopView
+            initialBarcodeToAdd={prefilledBarcodeForShop}
+            onClearInitialBarcode={() => setPrefilledBarcodeForShop('')}
             onSelectBarcodeForScan={(barcode) => {
               setActiveTab('scan');
             }}
@@ -177,7 +180,10 @@ export function App() {
         {activeTab === 'scan' && (
           <ScanView
             onNavigateToCart={() => setActiveTab('cart')}
-            onNavigateToShop={() => setActiveTab('shop')}
+            onNavigateToShop={(barcode) => {
+              if (barcode && typeof barcode === 'string') setPrefilledBarcodeForShop(barcode);
+              setActiveTab('shop');
+            }}
           />
         )}
 
