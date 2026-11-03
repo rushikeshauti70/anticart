@@ -433,18 +433,18 @@ CREATE POLICY "Service role full access on scan_events" ON scan_events
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- 7. purchases
-CREATE POLICY "Public read on completed purchases" ON purchases
-    FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY "Public insert on completed purchases" ON purchases
-    FOR INSERT TO anon, authenticated WITH CHECK (true);
+CREATE POLICY "Customer read on completed purchases" ON purchases
+    FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Customer insert on completed purchases" ON purchases
+    FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "Service role full access on purchases" ON purchases
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- 8. purchase_items
-CREATE POLICY "Public read on purchase items" ON purchase_items
-    FOR SELECT TO anon, authenticated USING (true);
-CREATE POLICY "Public insert on purchase items" ON purchase_items
-    FOR INSERT TO anon, authenticated WITH CHECK (true);
+CREATE POLICY "Customer read on purchase items" ON purchase_items
+    FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Customer insert on purchase items" ON purchase_items
+    FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "Service role full access on purchase_items" ON purchase_items
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -475,10 +475,10 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
 
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
-GRANT SELECT ON catalog_products, products, carts, cart_items, purchases, purchase_items, trolley_events, trolley_telemetry, system_settings TO anon;
+GRANT SELECT ON catalog_products, products, carts, cart_items, trolley_events, trolley_telemetry, system_settings TO anon;
 GRANT INSERT, UPDATE, DELETE ON carts, cart_items TO anon;
-GRANT INSERT ON scan_events, purchases, purchase_items TO anon;
-GRANT EXECUTE ON FUNCTION fn_get_admin_dashboard_kpis() TO anon, authenticated, service_role;
+GRANT INSERT ON scan_events TO anon;
+GRANT EXECUTE ON FUNCTION fn_get_admin_dashboard_kpis() TO authenticated, service_role;
 
 -- =============================================================================
 -- END OF FINAL_SUPABASE_SCHEMA.sql

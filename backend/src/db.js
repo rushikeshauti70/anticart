@@ -1012,10 +1012,11 @@ class SupabaseStore {
 
   async getCatalogProductBySkuOrBarcode(identifier) {
     try {
+      const cleanIdentifier = String(identifier).replace(/[,()".\\]/g, '').trim();
       let { data, error } = await this.supabase
         .from('catalog_products')
         .select('*, products(id, stock, price, active)')
-        .or(`sku.eq.${identifier},barcode.eq.${identifier}`)
+        .or(`sku.eq.${cleanIdentifier},barcode.eq.${cleanIdentifier}`)
         .eq('is_active', true)
         .maybeSingle();
       if (error || !data) return null;
@@ -1111,7 +1112,10 @@ class SupabaseStore {
       .order('created_at', { ascending: false });
 
     if (search) {
-      query = query.or(`name.ilike.%${search}%,barcode.ilike.%${search}%`);
+      const cleanSearch = String(search).replace(/[,()".\\]/g, ' ').trim();
+      if (cleanSearch) {
+        query = query.or(`name.ilike.%${cleanSearch}%,barcode.ilike.%${cleanSearch}%`);
+      }
     }
     if (category && category !== 'All') {
       query = query.eq('category', category);

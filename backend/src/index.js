@@ -16,6 +16,57 @@ import { scanner, mqttClient, eventLogger } from './system.js';
 
 const app = express();
 
+// HTTP Security Headers (anti-sniff, clickjacking protection, secure referrer policy)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// In-memory sliding window rate limiter to defend against API abuse & DoS
+class RateLimiter {
+  constructor(windowMs = 60000, maxRequests = 200) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+    this.hits = new Map();
+  }
+
+  middleware() {
+    return (req, res, next) => {
+      // Don't rate-limit SSE stream or health check
+      if (req.path === '/health' || req.path === '/api/stream') return next();
+
+      const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+      const now = Date.now();
+      const record = this.hits.get(ip) || { count: 0, resetTime: now + this.windowMs };
+
+      if (now > record.resetTime) {
+        record.count = 1;
+        record.resetTime = now + this.windowMs;
+      } else {
+        record.count += 1;
+      }
+
+      this.hits.set(ip, record);
+
+      if (record.count > this.maxRequests) {
+        return res.status(429).json({
+          error: {
+            code: 'RATE_LIMIT_EXCEEDED',
+            message: 'Too many requests. Please slow down.',
+          }
+        });
+      }
+      next();
+    };
+  }
+}
+
+const apiLimiter = new RateLimiter(60000, 200); // 200 requests/minute per client
+app.use(apiLimiter.middleware());
+
 // CORS configuration
 const allowedOrigins = [
   config.frontendOrigin,
@@ -89,10 +140,11 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('[SERVER ERROR]', err.stack || err.message);
   const status = err.status || 500;
+  const isProd = process.env.NODE_ENV === 'production';
   res.status(status).json({
     error: {
-      code: err.code || 'INTERNAL_SERVER_ERROR',
-      message: err.message || 'An unexpected error occurred',
+      code: err.code || (status === 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST'),
+      message: (isProd && status === 500) ? 'An internal server error occurred' : (err.message || 'An unexpected error occurred'),
     }
   });
 });

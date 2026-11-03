@@ -77,8 +77,8 @@ adminRouter.get('/admin/scans', async (req, res, next) => {
   try {
     const { page = '1', pageSize = '25', result = '', search = '' } = req.query;
     const data = await db.getAdminScanEvents({
-      page: parseInt(page, 10) || 1,
-      pageSize: parseInt(pageSize, 10) || 25,
+      page: Math.max(1, parseInt(page, 10) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 25)),
       result: String(result),
       search: String(search),
     });
@@ -96,8 +96,8 @@ adminRouter.get('/admin/movements', async (req, res, next) => {
   try {
     const { page = '1', pageSize = '25', reason = '', productId = '' } = req.query;
     const data = await db.getAdminStockMovements({
-      page: parseInt(page, 10) || 1,
-      pageSize: parseInt(pageSize, 10) || 25,
+      page: Math.max(1, parseInt(page, 10) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 25)),
       reason: String(reason),
       productId: String(productId),
     });

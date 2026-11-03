@@ -40,37 +40,20 @@ export async function optionalJwtAuth(req, res, next) {
           ...data.user.user_metadata,
         };
         return next();
+      } else if (error) {
+        // Token was provided but failed cryptographic signature or expiration check
+        req.user = null;
+        return next();
       }
     } catch (err) {
       console.warn('[AUTH] Supabase token verification note:', err.message);
+      req.user = null;
+      return next();
     }
   }
 
-  // 2. Fallback to JWKS if configured with 1-hour in-memory key caching
-  if (config.supabase.jwksUrl) {
-    try {
-      const now = Date.now();
-      if (!cachedJwks || now - jwksCacheTime > 3600000) {
-        const jwksRes = await fetch(config.supabase.jwksUrl);
-        if (jwksRes.ok) {
-          cachedJwks = await jwksRes.json();
-          jwksCacheTime = now;
-        }
-      }
-
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-        if (payload.exp && Date.now() / 1000 > payload.exp) {
-          return res.status(401).json({ error: { code: 'TOKEN_EXPIRED', message: 'Authentication token has expired' } });
-        }
-        req.user = payload;
-      }
-    } catch (err) {
-      console.warn('[AUTH] JWKS verification warning:', err.message);
-    }
-  }
-
+  // Token was supplied but cannot be cryptographically verified; never trust unverified base64 claims
+  req.user = null;
   next();
 }
 

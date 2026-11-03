@@ -27,8 +27,8 @@ productsRouter.get('/products', async (req, res, next) => {
     const result = await db.getProducts({
       search: String(search),
       category: String(category),
-      page: parseInt(page, 10) || 1,
-      pageSize: parseInt(pageSize, 10) || 50,
+      page: Math.max(1, parseInt(page, 10) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 50)),
     });
     res.json(result);
   } catch (err) {

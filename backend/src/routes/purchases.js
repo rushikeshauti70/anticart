@@ -8,8 +8,8 @@ purchasesRouter.get('/purchases', async (req, res, next) => {
   try {
     const { page = '1', pageSize = '20' } = req.query;
     const result = await db.getPurchases({
-      page: parseInt(page, 10) || 1,
-      pageSize: parseInt(pageSize, 10) || 20,
+      page: Math.max(1, parseInt(page, 10) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize, 10) || 20)),
     });
     res.json(result);
   } catch (err) {
