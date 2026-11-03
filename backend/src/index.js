@@ -10,6 +10,7 @@ import { reportsRouter } from './routes/reports.js';
 import { cartRouter } from './routes/cart.js';
 import { purchasesRouter } from './routes/purchases.js';
 import { trolleyRouter } from './routes/trolley.js';
+import { adminRouter } from './routes/admin.js';
 import { optionalJwtAuth } from './middleware/auth.js';
 import { scanner, mqttClient, eventLogger } from './system.js';
 
@@ -30,10 +31,13 @@ app.use(cors({
     if (allowedOrigins.includes(origin) || allowedOrigins.includes(cleanOrigin) || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
-    if (cleanOrigin.endsWith('.vercel.app')) {
+    if (cleanOrigin.endsWith('.vercel.app') || cleanOrigin.endsWith('.onrender.com')) {
       return callback(null, true);
     }
-    return callback(null, true);
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS origin denied'));
   },
   credentials: true,
 }));
@@ -69,6 +73,7 @@ app.use('/api', reportsRouter);
 app.use('/api', cartRouter);
 app.use('/api', purchasesRouter);
 app.use('/api', trolleyRouter);
+app.use('/api', adminRouter);
 
 // 404 Handler
 app.use((req, res) => {

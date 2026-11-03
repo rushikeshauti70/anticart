@@ -114,6 +114,20 @@ export const api = {
     request(`/api/trolley/${deviceId}/events?page=${page}&pageSize=${pageSize}`),
   sendTrolleyCommand: (deviceId = 'trolley-01', type) =>
     request(`/api/trolley/${deviceId}/command`, { method: 'POST', body: JSON.stringify({ type }) }),
+
+  // Admin Analytics & Database Diagnostics
+  getAdminDashboard: (days = 14) => request(`/api/admin/dashboard?days=${days}`),
+  getDatabaseHealth: () => request('/api/admin/database-health'),
+  getAdminScans: ({ page = 1, pageSize = 25, result = '', search = '' } = {}) => {
+    const params = new URLSearchParams({ page, pageSize, result, search });
+    return request(`/api/admin/scans?${params.toString()}`);
+  },
+  getAdminMovements: ({ page = 1, pageSize = 25, reason = '', productId = '' } = {}) => {
+    const params = new URLSearchParams({ page, pageSize, reason, productId });
+    return request(`/api/admin/movements?${params.toString()}`);
+  },
+  triggerAdminLogFlush: () => request('/api/admin/flush-logs', { method: 'POST' }),
+  quickRestock: (productId, delta = 10) => request('/api/admin/restock-quick', { method: 'POST', body: JSON.stringify({ productId, delta }) }),
 };
 
 // Resilient Server-Sent Events (SSE) subscriber with back-off reconnect

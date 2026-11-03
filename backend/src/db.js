@@ -712,6 +712,194 @@ class MemoryStore {
     return this.stockMovements;
   }
 
+
+  // --- Admin Analytics & Monitoring (MemoryStore) ---
+  async getAdminDashboardStats(days = 14) {
+    const purchases = Array.from(this.purchases.values());
+    const completedPurchases = purchases.filter(p => p.status === 'completed');
+    const cancelledPurchases = purchases.filter(p => p.status === 'cancelled');
+
+    const totalRevenue = completedPurchases.reduce((acc, p) => acc + (parseFloat(p.total) || 0), 0);
+    const netRevenue = completedPurchases.reduce((acc, p) => acc + (parseFloat(p.subtotal) || 0), 0);
+    const taxCollected = completedPurchases.reduce((acc, p) => acc + (parseFloat(p.gst_total) || 0), 0);
+    const orderCount = completedPurchases.length;
+    const avgOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+
+    // Daily Sales Timeline (Last 'days' days)
+    const timelineMap = new Map();
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 86400000);
+      const key = d.toISOString().split('T')[0];
+      timelineMap.set(key, { date: key, revenue: 0, orders: 0, gst: 0 });
+    }
+
+    for (const p of completedPurchases) {
+      const key = (p.created_at || '').split('T')[0];
+      if (timelineMap.has(key)) {
+        const item = timelineMap.get(key);
+        item.revenue = Math.round((item.revenue + (parseFloat(p.total) || 0)) * 100) / 100;
+        item.gst = Math.round((item.gst + (parseFloat(p.gst_total) || 0)) * 100) / 100;
+        item.orders += 1;
+      }
+    }
+    const salesTimeline = Array.from(timelineMap.values());
+
+    // Category Sales Breakdown
+    const catMap = new Map();
+    let totalItemsSold = 0;
+    for (const item of this.purchaseItems.values()) {
+      const prod = this.products.get(item.product_id);
+      const cat = prod?.category || 'General';
+      const prev = catMap.get(cat) || { category: cat, revenue: 0, units: 0 };
+      prev.revenue = Math.round((prev.revenue + (parseFloat(item.line_total) || 0)) * 100) / 100;
+      prev.units += item.quantity || 1;
+      totalItemsSold += item.quantity || 1;
+      catMap.set(cat, prev);
+    }
+    const categoryBreakdown = Array.from(catMap.values()).map(c => ({
+      ...c,
+      percentage: totalRevenue > 0 ? Math.round((c.revenue / totalRevenue) * 1000) / 10 : 0
+    }));
+
+    // Inventory Intelligence
+    const activeProducts = Array.from(this.products.values()).filter(p => p.active !== false);
+    let inventoryValuation = 0;
+    let outOfStockCount = 0;
+    let lowStockCount = 0;
+    let healthyStockCount = 0;
+    const lowStockItems = [];
+
+    for (const p of activeProducts) {
+      const stock = p.stock ?? 0;
+      const price = parseFloat(p.price) || 0;
+      inventoryValuation += stock * price;
+      if (stock === 0) {
+        outOfStockCount++;
+        lowStockItems.push({ id: p.id, name: p.name, barcode: p.barcode, sku: p.sku, stock, price, category: p.category, status: 'out_of_stock' });
+      } else if (stock <= 5) {
+        lowStockCount++;
+        lowStockItems.push({ id: p.id, name: p.name, barcode: p.barcode, sku: p.sku, stock, price, category: p.category, status: 'low_stock' });
+      } else {
+        healthyStockCount++;
+      }
+    }
+
+    // Scan Events & Reliability
+    const allScans = Array.from(this.scanEvents.values());
+    const totalScans = allScans.length;
+    const successfulScans = allScans.filter(s => s.result === 'added').length;
+    const unknownScans = allScans.filter(s => s.result === 'unknown').length;
+    const duplicateScans = allScans.filter(s => s.result === 'duplicate').length;
+    const scanReliability = totalScans > 0 ? Math.round(((successfulScans + duplicateScans) / totalScans) * 1000) / 10 : 100;
+
+    // Active Carts
+    const activeCarts = Array.from(this.carts.values()).filter(c => c.status === 'open').length;
+
+    // Recent 15 Activity Events
+    const recentActivity = [
+      ...allScans.slice(0, 10).map(s => ({
+        type: 'SCAN',
+        title: `Scan ${s.result}`,
+        detail: `Barcode: ${s.barcode}`,
+        time: s.created_at,
+        status: s.result === 'added' ? 'success' : (s.result === 'unknown' ? 'warning' : 'info')
+      })),
+      ...this.stockMovements.slice(0, 10).map(m => {
+        const prod = this.products.get(m.product_id);
+        return {
+          type: 'STOCK',
+          title: `Stock ${m.reason} (${m.change > 0 ? '+' : ''}${m.change})`,
+          detail: prod?.name || m.product_id,
+          time: m.created_at,
+          status: m.change < 0 ? 'info' : 'success'
+        };
+      })
+    ].sort((a, b) => new Date(b.time) - new Date(a.time)).slice(0, 15);
+
+    return {
+      kpis: {
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        netRevenue: Math.round(netRevenue * 100) / 100,
+        taxCollected: Math.round(taxCollected * 100) / 100,
+        orderCount,
+        cancelledCount: cancelledPurchases.length,
+        avgOrderValue: Math.round(avgOrderValue * 100) / 100,
+        totalItemsSold,
+        activeCarts,
+        scanReliability,
+        totalScans,
+        unknownScans,
+        totalInventoryValuation: Math.round(inventoryValuation * 100) / 100,
+        totalProducts: activeProducts.length,
+        totalCatalogItems: this.catalogProducts.size,
+        outOfStockCount,
+        lowStockCount,
+        healthyStockCount,
+      },
+      salesTimeline,
+      categoryBreakdown,
+      lowStockAlerts: lowStockItems.slice(0, 8),
+      recentActivity,
+    };
+  }
+
+  async getDatabaseHealth() {
+    return {
+      mode: 'in_memory',
+      status: 'healthy',
+      connected: true,
+      timestamp: new Date().toISOString(),
+      tables: {
+        catalog_products: this.catalogProducts.size,
+        products: this.products.size,
+        carts: this.carts.size,
+        cart_items: this.cartItems.size,
+        scan_events: this.scanEvents.size,
+        stock_movements: this.stockMovements.length,
+        purchases: this.purchases.size,
+        purchase_items: this.purchaseItems.size,
+        trolley_events: this.trolleyEvents.length,
+        trolley_telemetry: this.trolleyTelemetry.length,
+      },
+      memory: process.memoryUsage(),
+      uptimeSec: Math.round(process.uptime()),
+    };
+  }
+
+  async getAdminScanEvents({ page = 1, pageSize = 25, result = '', search = '' } = {}) {
+    let list = Array.from(this.scanEvents.values());
+    if (result) {
+      list = list.filter(s => s.result === result);
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(s => s.barcode?.includes(q) || s.scan_id?.includes(q));
+    }
+    list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const total = list.length;
+    const startIndex = (page - 1) * pageSize;
+    return { data: list.slice(startIndex, startIndex + pageSize), total, page, pageSize };
+  }
+
+  async getAdminStockMovements({ page = 1, pageSize = 25, reason = '', productId = '' } = {}) {
+    let list = [...this.stockMovements];
+    if (reason) {
+      list = list.filter(m => m.reason === reason);
+    }
+    if (productId) {
+      list = list.filter(m => m.product_id === productId);
+    }
+    list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const enriched = list.map(m => ({
+      ...m,
+      product: this.products.get(m.product_id) || null
+    }));
+    const total = enriched.length;
+    const startIndex = (page - 1) * pageSize;
+    return { data: enriched.slice(startIndex, startIndex + pageSize), total, page, pageSize };
+  }
+
   async clearCartItems(cartId) {
     for (const [key, item] of this.cartItems.entries()) {
       if (item.cart_id === cartId) {
@@ -1472,6 +1660,216 @@ class SupabaseStore {
     const { data, error } = await query;
     if (error) throw error;
     return data || [];
+  }
+
+
+  // --- Admin Analytics & Monitoring (SupabaseStore) ---
+  async getAdminDashboardStats(days = 14) {
+    try {
+      // 1. Fetch completed purchases
+      const { data: purchases } = await this.supabase
+        .from('purchases')
+        .select('id, subtotal, gst_total, total, status, created_at')
+        .order('created_at', { ascending: false })
+        .limit(1000);
+
+      const completed = (purchases || []).filter(p => p.status === 'completed');
+      const cancelled = (purchases || []).filter(p => p.status === 'cancelled');
+
+      const totalRevenue = completed.reduce((acc, p) => acc + (parseFloat(p.total) || 0), 0);
+      const netRevenue = completed.reduce((acc, p) => acc + (parseFloat(p.subtotal) || 0), 0);
+      const taxCollected = completed.reduce((acc, p) => acc + (parseFloat(p.gst_total) || 0), 0);
+      const orderCount = completed.length;
+      const avgOrderValue = orderCount > 0 ? totalRevenue / orderCount : 0;
+
+      // 2. Timeline
+      const timelineMap = new Map();
+      const now = new Date();
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 86400000);
+        const key = d.toISOString().split('T')[0];
+        timelineMap.set(key, { date: key, revenue: 0, orders: 0, gst: 0 });
+      }
+
+      for (const p of completed) {
+        const key = (p.created_at || '').split('T')[0];
+        if (timelineMap.has(key)) {
+          const item = timelineMap.get(key);
+          item.revenue = Math.round((item.revenue + (parseFloat(p.total) || 0)) * 100) / 100;
+          item.gst = Math.round((item.gst + (parseFloat(p.gst_total) || 0)) * 100) / 100;
+          item.orders += 1;
+        }
+      }
+      const salesTimeline = Array.from(timelineMap.values());
+
+      // 3. Inventory intelligence
+      const { data: products } = await this.supabase
+        .from('products')
+        .select('id, name, barcode, sku, category, price, stock, active')
+        .eq('active', true);
+
+      let inventoryValuation = 0;
+      let outOfStockCount = 0;
+      let lowStockCount = 0;
+      let healthyStockCount = 0;
+      const lowStockItems = [];
+
+      for (const p of products || []) {
+        const stock = p.stock ?? 0;
+        const price = parseFloat(p.price) || 0;
+        inventoryValuation += stock * price;
+        if (stock === 0) {
+          outOfStockCount++;
+          lowStockItems.push({ id: p.id, name: p.name, barcode: p.barcode, sku: p.sku, stock, price, category: p.category, status: 'out_of_stock' });
+        } else if (stock <= 5) {
+          lowStockCount++;
+          lowStockItems.push({ id: p.id, name: p.name, barcode: p.barcode, sku: p.sku, stock, price, category: p.category, status: 'low_stock' });
+        } else {
+          healthyStockCount++;
+        }
+      }
+
+      // 4. Category breakdown
+      const { data: purchaseItems } = await this.supabase
+        .from('purchase_items')
+        .select('id, product_id, quantity, line_total')
+        .limit(2000);
+
+      const prodMap = new Map((products || []).map(p => [p.id, p]));
+      const catMap = new Map();
+      let totalItemsSold = 0;
+
+      for (const pi of purchaseItems || []) {
+        const prod = prodMap.get(pi.product_id);
+        const cat = prod?.category || 'General';
+        const prev = catMap.get(cat) || { category: cat, revenue: 0, units: 0 };
+        prev.revenue = Math.round((prev.revenue + (parseFloat(pi.line_total) || 0)) * 100) / 100;
+        prev.units += pi.quantity || 1;
+        totalItemsSold += pi.quantity || 1;
+        catMap.set(cat, prev);
+      }
+      const categoryBreakdown = Array.from(catMap.values()).map(c => ({
+        ...c,
+        percentage: totalRevenue > 0 ? Math.round((c.revenue / totalRevenue) * 1000) / 10 : 0
+      }));
+
+      // 5. Scans
+      const { data: scanEvents } = await this.supabase
+        .from('scan_events')
+        .select('id, scan_id, barcode, result, created_at')
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      const totalScans = (scanEvents || []).length;
+      const successfulScans = (scanEvents || []).filter(s => s.result === 'added').length;
+      const unknownScans = (scanEvents || []).filter(s => s.result === 'unknown').length;
+      const duplicateScans = (scanEvents || []).filter(s => s.result === 'duplicate').length;
+      const scanReliability = totalScans > 0 ? Math.round(((successfulScans + duplicateScans) / totalScans) * 1000) / 10 : 100;
+
+      // 6. Active carts
+      const { count: activeCarts } = await this.supabase
+        .from('carts')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'open');
+
+      const { count: catalogCount } = await this.supabase
+        .from('catalog_products')
+        .select('id', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      // 7. Recent activity
+      const recentActivity = (scanEvents || []).slice(0, 15).map(s => ({
+        type: 'SCAN',
+        title: `Scan ${s.result}`,
+        detail: `Barcode: ${s.barcode}`,
+        time: s.created_at,
+        status: s.result === 'added' ? 'success' : (s.result === 'unknown' ? 'warning' : 'info')
+      }));
+
+      return {
+        kpis: {
+          totalRevenue: Math.round(totalRevenue * 100) / 100,
+          netRevenue: Math.round(netRevenue * 100) / 100,
+          taxCollected: Math.round(taxCollected * 100) / 100,
+          orderCount,
+          cancelledCount: cancelled.length,
+          avgOrderValue: Math.round(avgOrderValue * 100) / 100,
+          totalItemsSold,
+          activeCarts: activeCarts || 0,
+          scanReliability,
+          totalScans,
+          unknownScans,
+          totalInventoryValuation: Math.round(inventoryValuation * 100) / 100,
+          totalProducts: (products || []).length,
+          totalCatalogItems: catalogCount || 0,
+          outOfStockCount,
+          lowStockCount,
+          healthyStockCount,
+        },
+        salesTimeline,
+        categoryBreakdown,
+        lowStockAlerts: lowStockItems.slice(0, 8),
+        recentActivity,
+      };
+    } catch (err) {
+      console.error('[DB] getAdminDashboardStats fallback error:', err.message);
+      // Fallback empty response
+      return {
+        kpis: { totalRevenue: 0, netRevenue: 0, taxCollected: 0, orderCount: 0, cancelledCount: 0, avgOrderValue: 0, totalItemsSold: 0, activeCarts: 0, scanReliability: 100, totalScans: 0, unknownScans: 0, totalInventoryValuation: 0, totalProducts: 0, totalCatalogItems: 0, outOfStockCount: 0, lowStockCount: 0, healthyStockCount: 0 },
+        salesTimeline: [],
+        categoryBreakdown: [],
+        lowStockAlerts: [],
+        recentActivity: [],
+      };
+    }
+  }
+
+  async getDatabaseHealth() {
+    const tables = ['catalog_products', 'products', 'carts', 'cart_items', 'scan_events', 'stock_movements', 'purchases', 'purchase_items', 'trolley_events', 'trolley_telemetry'];
+    const counts = {};
+    for (const t of tables) {
+      try {
+        const { count, error } = await this.supabase.from(t).select('id', { count: 'exact', head: true });
+        counts[t] = error ? 0 : (count || 0);
+      } catch (e) {
+        counts[t] = 0;
+      }
+    }
+    return {
+      mode: 'supabase',
+      status: 'healthy',
+      connected: true,
+      timestamp: new Date().toISOString(),
+      tables: counts,
+      memory: process.memoryUsage(),
+      uptimeSec: Math.round(process.uptime()),
+    };
+  }
+
+  async getAdminScanEvents({ page = 1, pageSize = 25, result = '', search = '' } = {}) {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    let query = this.supabase.from('scan_events').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+    if (result) query = query.eq('result', result);
+    if (search) query = query.ilike('barcode', `%${search}%`);
+    const { data, count, error } = await query.range(from, to);
+    if (error) throw error;
+    return { data: data || [], total: count || 0, page, pageSize };
+  }
+
+  async getAdminStockMovements({ page = 1, pageSize = 25, reason = '', productId = '' } = {}) {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+    let query = this.supabase.from('stock_movements').select('*, products(id, name, barcode, sku, category)', { count: 'exact' }).order('created_at', { ascending: false });
+    if (reason) query = query.eq('reason', reason);
+    if (productId) query = query.eq('product_id', productId);
+    const { data, count, error } = await query.range(from, to);
+    if (error) throw error;
+    const enriched = (data || []).map(m => ({
+      ...m,
+      product: m.products || null
+    }));
+    return { data: enriched, total: count || 0, page, pageSize };
   }
 
   async clearCartItems(cartId) {

@@ -149,14 +149,14 @@ async function runTests() {
     // Mock writeBatchToExcel throwing EBUSY (simulating Windows Excel lock)
     const originalWrite = logger.writeBatchToExcel;
     let callCount = 0;
-    logger.writeBatchToExcel = async () => {
+    logger.writeBatchToExcel = async function(...args) {
       callCount++;
       if (callCount === 1) {
         const lockErr = new Error('EBUSY: resource locked');
         lockErr.code = 'EBUSY';
         throw lockErr;
       }
-      return originalWrite.apply(logger, arguments);
+      return originalWrite.apply(logger, args);
     };
 
     // 1st Flush Attempt -> Locked

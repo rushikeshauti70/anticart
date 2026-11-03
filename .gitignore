@@ -33,6 +33,9 @@ yarn-error.log*
 exports/*.xlsx
 exports/*.csv
 !exports/.gitkeep
+backend/exports/*.xlsx
+backend/exports/*.csv
+!backend/exports/.gitkeep
 *.db
 *.sqlite
 coverage/

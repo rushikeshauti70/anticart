@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingBag, Camera, ShoppingCart, Radio, User, AlertCircle } from 'lucide-react';
+import { ShoppingBag, Camera, ShoppingCart, Radio, User, LayoutDashboard, AlertCircle } from 'lucide-react';
 import { ShopView } from './views/ShopView';
 import { ScanView } from './views/ScanView';
 import { CartView } from './views/CartView';
 import { TrolleyView } from './views/TrolleyView';
 import { AccountView } from './views/AccountView';
+import { AdminDashboardView } from './views/AdminDashboardView';
 import { api, subscribeToSse } from './api';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState('shop'); // shop, scan, cart, trolley, account
+  const [activeTab, setActiveTab] = useState('shop'); // shop, scan, cart, trolley, account, admin
   const [connectionStatus, setConnectionStatus] = useState('connecting'); // connecting, online, stale, offline, reconnecting
   const [trolleyState, setTrolleyState] = useState(null);
   const [trolleyEvents, setTrolleyEvents] = useState([]);
@@ -144,6 +145,15 @@ export function App() {
             <User size={18} />
             <span>Account</span>
           </button>
+
+          <button
+            className={`nav-item ${activeTab === 'admin' ? 'active' : ''}`}
+            onClick={() => setActiveTab('admin')}
+            style={{ borderLeft: '1px solid var(--border)', marginLeft: '4px', paddingLeft: '12px' }}
+          >
+            <LayoutDashboard size={18} />
+            <span>Dashboard</span>
+          </button>
         </nav>
       </header>
 
@@ -213,6 +223,10 @@ export function App() {
 
         {activeTab === 'account' && (
           <AccountView />
+        )}
+
+        {activeTab === 'admin' && (
+          <AdminDashboardView />
         )}
       </main>
     </div>
