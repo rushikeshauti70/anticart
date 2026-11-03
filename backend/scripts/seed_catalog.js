@@ -163,3 +163,4 @@ if (process.argv[1] && process.argv[1].endsWith('seed_catalog.js')) {
     process.exit(1);
   });
 }
+

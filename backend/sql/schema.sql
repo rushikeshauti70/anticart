@@ -6,18 +6,48 @@
 -- Enable pgcrypto or uuid-ossp for UUID generation
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. PRODUCTS (Master Catalog managed by shop owner)
+-- 0. CATALOG_PRODUCTS (Central Master Product Catalog)
+CREATE TABLE IF NOT EXISTS catalog_products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    barcode TEXT UNIQUE NULL,
+    name TEXT NOT NULL,
+    sku TEXT UNIQUE NOT NULL,
+    category TEXT NOT NULL DEFAULT 'General',
+    brand TEXT NULL,
+    description TEXT NULL,
+    image_url TEXT NULL,
+    default_price NUMERIC(10,2) NOT NULL CHECK (default_price >= 0),
+    unit TEXT NOT NULL DEFAULT 'pc',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 1. PRODUCTS (Store Inventory linked to master catalog)
 CREATE TABLE IF NOT EXISTS products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    catalog_product_id UUID NULL REFERENCES catalog_products(id) ON DELETE SET NULL,
     barcode TEXT UNIQUE NOT NULL,
+    sku TEXT NULL,
     name TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT 'General',
     price NUMERIC(10,2) NOT NULL CHECK (price >= 0),
     gst_percent NUMERIC(5,2) NOT NULL DEFAULT 0 CHECK (gst_percent >= 0),
     stock INTEGER NULL CHECK (stock IS NULL OR stock >= 0),
+    unit TEXT NOT NULL DEFAULT 'pc',
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 1.1 STOCK_MOVEMENTS (Audit trail for inventory stock adjustments, sales, and restocks)
+CREATE TABLE IF NOT EXISTS stock_movements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    change INTEGER NOT NULL,
+    reason TEXT NOT NULL CHECK (reason IN ('sale', 'restock', 'adjustment', 'scan_add', 'scan_remove', 'cancellation')),
+    scan_id UUID NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 2. CARTS (Active customer shopping carts)
@@ -155,7 +185,9 @@ CREATE TRIGGER trg_cart_items_updated_at
 -- Protect all tables from public anonymous writes. Backend service-role key
 -- bypasses RLS automatically.
 -- =============================================================================
+ALTER TABLE catalog_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE carts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cart_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scan_events ENABLE ROW LEVEL SECURITY;
@@ -165,7 +197,16 @@ ALTER TABLE trolley_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trolley_telemetry ENABLE ROW LEVEL SECURITY;
 
 -- Default policies: allow read-only access for anon if needed, or service-role only
+CREATE POLICY "Allow service role full access on catalog_products" ON catalog_products
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow public read access on active catalog_products" ON catalog_products
+    FOR SELECT TO anon, authenticated USING (is_active = true);
+
 CREATE POLICY "Allow service role full access on products" ON products
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow service role full access on stock_movements" ON stock_movements
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow service role full access on carts" ON carts

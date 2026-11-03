@@ -39,3 +39,4 @@ CREATE POLICY "Allow service role full access on catalog_products" ON catalog_pr
 
 CREATE POLICY "Allow public read access on active catalog_products" ON catalog_products
     FOR SELECT TO anon, authenticated USING (is_active = true);
+

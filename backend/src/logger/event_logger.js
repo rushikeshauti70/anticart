@@ -642,3 +642,4 @@ export class EventLogger extends EventEmitter {
     }
   }
 }
+
