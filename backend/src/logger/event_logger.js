@@ -115,6 +115,21 @@ export class EventLogger extends EventEmitter {
   }
 
   /**
+   * Get real-time metrics and state of the logger
+   */
+  getStats() {
+    return {
+      bufferSize: this.buffer ? this.buffer.length : 0,
+      maxBufferSize: this.maxBufferSize || 5000,
+      flushIntervalSec: this.flushIntervalSec || 5,
+      lastFlushTime: this.lastFlushTime || null,
+      totalCleanedWritten: this.totalCleanedWritten || 0,
+      totalAlertsLogged: this.totalAlertsLogged || 0,
+      activeWorkbook: this.getActiveWorkbookPath ? path.basename(this.getActiveWorkbookPath()) : null,
+    };
+  }
+
+  /**
    * 5-Second Cleaning Algorithm:
    * 1. De-duplicate identical events & debounced repeat barcodes
    * 2. Drop noise (empty reads, malformed scans, heartbeats, status pings)

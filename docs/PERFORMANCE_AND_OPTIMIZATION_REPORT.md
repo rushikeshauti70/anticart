@@ -60,3 +60,4 @@ Rather than executing resource-intensive multi-table aggregation queries on ever
 ### 2. High-Concurrency Mutex Locking
 * **Problem**: When a scarce product has only 1 unit remaining in stock, two concurrent customers scanning or clicking "+ Cart" simultaneously could cause a race condition, resulting in negative stock.
 * **Solution**: The `InventoryService` enforces per-product asynchronous mutex locks. When 4 simultaneous requests compete for 2 available units, exactly 2 succeed and 2 receive clean out-of-stock notifications without database lock contention.
+

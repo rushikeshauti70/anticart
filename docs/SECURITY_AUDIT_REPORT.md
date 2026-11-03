@@ -77,3 +77,4 @@ This document reports the security posture, vulnerability findings, and mitigati
   * No `.env` or `.env.local` files are tracked in git.
   * `.env.example` contains placeholders exclusively.
   * `exports/*.xlsx` and `exports/*.csv` are ignored via `.gitignore` to prevent leaking sales or customer data.
+

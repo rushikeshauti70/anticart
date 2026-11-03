@@ -24,7 +24,11 @@ adminRouter.get('/admin/dashboard', async (req, res, next) => {
     };
 
     // Excel Logger real-time status
-    const loggerStats = eventLogger.getStats();
+    const loggerStats = typeof eventLogger?.getStats === 'function' ? eventLogger.getStats() : {
+      bufferSize: eventLogger?.buffer?.length || 0,
+      lastFlushTime: eventLogger?.lastFlushTime || null,
+      totalCleanedWritten: eventLogger?.totalCleanedWritten || 0,
+    };
 
     res.json({
       success: true,
@@ -47,7 +51,11 @@ adminRouter.get('/admin/dashboard', async (req, res, next) => {
 adminRouter.get('/admin/database-health', async (req, res, next) => {
   try {
     const health = await db.getDatabaseHealth();
-    const loggerStats = eventLogger.getStats();
+    const loggerStats = typeof eventLogger?.getStats === 'function' ? eventLogger.getStats() : {
+      bufferSize: eventLogger?.buffer?.length || 0,
+      lastFlushTime: eventLogger?.lastFlushTime || null,
+      totalCleanedWritten: eventLogger?.totalCleanedWritten || 0,
+    };
 
     res.json({
       success: true,
@@ -143,3 +151,4 @@ adminRouter.post('/admin/restock-quick', async (req, res, next) => {
     next(err);
   }
 });
+

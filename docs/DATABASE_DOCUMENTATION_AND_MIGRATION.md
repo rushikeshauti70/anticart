@@ -161,3 +161,4 @@ If your database already contains tables from previous versions:
    ```bash
    node backend/scripts/seed_catalog.js
    ```
+
