@@ -25,10 +25,13 @@ async function runTests() {
   console.log('====================================================');
 
   const inventoryService = new InventoryService({ lowStockThreshold: 5 });
+  const runId = Math.floor(Date.now() % 1000000);
+  const barcodeA = `8903${runId}1`;
+  const barcodeB = `8903${runId}2`;
 
   // 1. Setup sample products & transactions
   const productA = await db.createProduct({
-    barcode: '8901000111222',
+    barcode: barcodeA,
     name: 'Organic Honey 250g',
     category: 'Groceries',
     price: 180.00,
@@ -37,7 +40,7 @@ async function runTests() {
   });
 
   const productB = await db.createProduct({
-    barcode: '8901000333444',
+    barcode: barcodeB,
     name: 'Gourmet Dark Chocolate 100g',
     category: 'Snacks',
     price: 95.00,
@@ -47,16 +50,16 @@ async function runTests() {
 
   // Record a scan event
   await db.recordScanEvent({
-    scanId: 'scan-admin-test-01',
+    scanId: `scan-admin-${runId}-01`,
     cartId: 'cart-admin-01',
-    barcode: '8901000111222',
+    barcode: barcodeA,
     productId: productA.id,
     result: 'added',
   });
 
   // Record an unknown scan event
   await db.recordScanEvent({
-    scanId: 'scan-admin-test-02',
+    scanId: `scan-admin-${runId}-02`,
     cartId: 'cart-admin-01',
     barcode: '9999999999999',
     productId: null,
@@ -118,7 +121,7 @@ async function runTests() {
 
     // Create a product with 1 unit in stock
     const scarceProd = await db.createProduct({
-      barcode: '8901000555666',
+      barcode: `8904${runId}5`,
       name: 'Scarce Item For Restock',
       category: 'General',
       price: 50.00,

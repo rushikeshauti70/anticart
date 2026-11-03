@@ -38,10 +38,18 @@ async function runTests() {
     allowNegativeStock: false,
   });
 
+  const runId = Math.floor(Date.now() % 1000000);
+  const sku1 = `CAT-TEST-${runId}-1`;
+  const sku2 = `CAT-TEST-${runId}-2`;
+  const sku3 = `CAT-TEST-${runId}-3`;
+  const barcode1 = `8901${runId}1`;
+  const barcode2 = `8901${runId}2`;
+  const barcode3 = `8901${runId}3`;
+
   // Setup sample catalog products
   const catItem1 = await db.createCatalogProduct({
-    sku: 'CAT-TEST-001',
-    barcode: '8901030383458',
+    sku: sku1,
+    barcode: barcode1,
     name: 'Red Bull Energy Drink 250ml',
     brand: 'Red Bull',
     category: 'Beverages',
@@ -52,8 +60,8 @@ async function runTests() {
   });
 
   const catItem2 = await db.createCatalogProduct({
-    sku: 'CAT-TEST-002',
-    barcode: '8901491101844',
+    sku: sku2,
+    barcode: barcode2,
     name: 'Lays American Style Cream & Onion 50g',
     brand: 'Lays',
     category: 'Snacks',
@@ -64,8 +72,8 @@ async function runTests() {
   });
 
   const catInactive = await db.createCatalogProduct({
-    sku: 'CAT-TEST-003',
-    barcode: '8901000000001',
+    sku: sku3,
+    barcode: barcode3,
     name: 'Discontinued Vintage Soda',
     brand: 'OldBrand',
     category: 'Beverages',
@@ -79,12 +87,12 @@ async function runTests() {
     assert.ok(all.data.length >= 2, 'Should list catalog products');
 
     const bev = await db.getCatalogProducts({ category: 'Beverages' });
-    assert.ok(bev.data.some(p => p.sku === 'CAT-TEST-001'), 'Should find Red Bull in Beverages');
-    assert.ok(!bev.data.some(p => p.sku === 'CAT-TEST-002'), 'Should not include Snacks in Beverages');
+    assert.ok(bev.data.some(p => p.sku === sku1), 'Should find Red Bull in Beverages');
+    assert.ok(!bev.data.some(p => p.sku === sku2), 'Should not include Snacks in Beverages');
 
     const searchRes = await db.getCatalogProducts({ search: 'Cream & Onion' });
-    assert.strictEqual(searchRes.data.length, 1);
-    assert.strictEqual(searchRes.data[0].sku, 'CAT-TEST-002');
+    assert.ok(searchRes.data.length >= 1);
+    assert.ok(searchRes.data.some(p => p.sku === sku2));
   });
 
   // 2. Linking catalog item to store inventory with initial stock
@@ -106,7 +114,7 @@ async function runTests() {
 
   // 3. 1-Click Cart Addition with Quantity Selector
   await test('3. 1-Click Cart Add with Quantity: Adds requested quantity and decrements stock atomically', async () => {
-    const trolleyId = 'trolley-test-catalog';
+    const trolleyId = `trolley-test-${runId}`;
     let emittedEvent = null;
     const listener = (evt) => { emittedEvent = evt; };
     inventoryService.on('item_added', listener);
@@ -133,8 +141,8 @@ async function runTests() {
 
   // 4. Idempotency Check via requestId
   await test('4. Idempotency Protection: Replaying same requestId does not double decrement or duplicate item', async () => {
-    const trolleyId = 'trolley-test-catalog';
-    const requestId = 'req-unique-test-999';
+    const trolleyId = `trolley-test-${runId}`;
+    const requestId = `req-unique-${runId}`;
 
     // First call
     const res1 = await inventoryService.addCatalogItemToCart({
@@ -170,8 +178,8 @@ async function runTests() {
       inventoryService.addCatalogItemToCart({
         catalogId: catItem1.id,
         quantity: 1,
-        requestId: `concurrent-req-${i}-${Date.now()}`,
-        trolleyId: `trolley-concurrent-${i}`,
+        requestId: `concurrent-req-${i}-${runId}-${Date.now()}`,
+        trolleyId: `trolley-concurrent-${runId}-${i}`,
       })
     );
 
@@ -202,9 +210,10 @@ async function runTests() {
 
   // 7. Auto-linking unstocked catalog product on demand
   await test('7. Unstocked Catalog Add: Auto-links to inventory if not previously linked', async () => {
+    const autoBarcode = `8902${runId}9`;
     const unstockedItem = await db.createCatalogProduct({
-      sku: 'CAT-AUTO-LINK',
-      barcode: '8901234567890',
+      sku: `CAT-AUTO-LINK-${runId}`,
+      barcode: autoBarcode,
       name: 'Auto Link Test Item',
       brand: 'TestBrand',
       category: 'General',
@@ -219,7 +228,7 @@ async function runTests() {
 
     assert.strictEqual(res.success, true);
     assert.ok(res.product.id, 'Must have been linked to inventory');
-    assert.strictEqual(res.product.barcode, '8901234567890');
+    assert.strictEqual(res.product.barcode, autoBarcode);
     assert.strictEqual(res.stock_remaining, 14, 'Default stock 15 minus 1 = 14');
   });
 

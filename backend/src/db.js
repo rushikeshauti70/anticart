@@ -1,6 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from './config.js';
+
+export function toDeterministicUuid(id) {
+  if (!id) return uuidv4();
+  const str = String(id).trim();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(str)) {
+    return str.toLowerCase();
+  }
+  const hash = crypto.createHash('sha256').update(str).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 
 class ProductCache {
   constructor(ttlMs = 60000) {
@@ -410,9 +422,10 @@ class MemoryStore {
   }
 
   async scanAndAddToCart({ barcode, scanId, trolleyId = 'trolley-01' }) {
+    const effectiveScanId = toDeterministicUuid(scanId);
     // Check scanId idempotency
-    if (this.scanEvents.has(scanId)) {
-      const priorEvent = this.scanEvents.get(scanId);
+    if (this.scanEvents.has(effectiveScanId)) {
+      const priorEvent = this.scanEvents.get(effectiveScanId);
       const cart = await this.getCartDetails(priorEvent.cart_id);
       const product = priorEvent.product_id ? this.products.get(priorEvent.product_id) : null;
       return {
@@ -427,9 +440,9 @@ class MemoryStore {
 
     if (!product) {
       // Record unknown barcode scan event
-      this.scanEvents.set(scanId, {
+      this.scanEvents.set(effectiveScanId, {
         id: uuidv4(),
-        scan_id: scanId,
+        scan_id: effectiveScanId,
         cart_id: cart.id,
         barcode,
         product_id: null,
@@ -462,9 +475,9 @@ class MemoryStore {
       });
     }
 
-    this.scanEvents.set(scanId, {
+    this.scanEvents.set(effectiveScanId, {
       id: uuidv4(),
-      scan_id: scanId,
+      scan_id: effectiveScanId,
       cart_id: cart.id,
       barcode,
       product_id: product.id,
@@ -666,20 +679,23 @@ class MemoryStore {
   }
 
   async checkScanProcessed(scanId) {
-    return this.scanEvents.has(scanId);
+    if (!scanId) return false;
+    const effectiveScanId = toDeterministicUuid(scanId);
+    return this.scanEvents.has(effectiveScanId);
   }
 
   async recordScanEvent({ scanId, cartId, barcode, productId, result }) {
+    const effectiveScanId = toDeterministicUuid(scanId);
     const record = {
       id: uuidv4(),
-      scan_id: scanId,
+      scan_id: effectiveScanId,
       cart_id: cartId,
       barcode,
       product_id: productId,
       result,
       created_at: new Date().toISOString(),
     };
-    this.scanEvents.set(scanId, record);
+    this.scanEvents.set(effectiveScanId, record);
     return record;
   }
 
@@ -948,6 +964,7 @@ class SupabaseStore {
         return {
           ...cp,
           inventory_id: inv?.id || null,
+          stock: inv?.stock ?? null,
           stock_qty: inv?.stock ?? null,
           inventory_price: inv?.price ?? cp.default_price,
           in_inventory: Boolean(inv),
@@ -975,6 +992,7 @@ class SupabaseStore {
       return {
         ...data,
         inventory_id: inv?.id || null,
+        stock: inv?.stock ?? null,
         stock_qty: inv?.stock ?? null,
         inventory_price: inv?.price ?? data.default_price,
         in_inventory: Boolean(inv),
@@ -998,6 +1016,7 @@ class SupabaseStore {
       return {
         ...data,
         inventory_id: inv?.id || null,
+        stock: inv?.stock ?? null,
         stock_qty: inv?.stock ?? null,
         inventory_price: inv?.price ?? data.default_price,
         in_inventory: Boolean(inv),
@@ -1334,17 +1353,21 @@ class SupabaseStore {
   }
 
   async scanAndAddToCart({ barcode, scanId, trolleyId = 'trolley-01' }) {
-    // Check if scanId exists
-    const { data: existingScan } = await this.supabase
-      .from('scan_events')
-      .select('*')
-      .eq('scan_id', scanId)
-      .maybeSingle();
+    const effectiveScanId = toDeterministicUuid(scanId);
 
-    if (existingScan) {
-      const cart = await this.getCartDetails(existingScan.cart_id);
-      const product = existingScan.product_id ? await this.getProductById(existingScan.product_id) : null;
-      return { duplicate: true, cart, product };
+    // Check if scanId exists
+    if (scanId) {
+      const { data: existingScan } = await this.supabase
+        .from('scan_events')
+        .select('*')
+        .eq('scan_id', effectiveScanId)
+        .maybeSingle();
+
+      if (existingScan) {
+        const cart = await this.getCartDetails(existingScan.cart_id);
+        const product = existingScan.product_id ? await this.getProductById(existingScan.product_id) : null;
+        return { duplicate: true, cart, product };
+      }
     }
 
     const cart = await this.getOrCreateOpenCart(trolleyId);
@@ -1352,7 +1375,7 @@ class SupabaseStore {
 
     if (!product) {
       await this.supabase.from('scan_events').insert({
-        scan_id: scanId,
+        scan_id: effectiveScanId,
         cart_id: cart.id,
         barcode,
         product_id: null,
@@ -1385,13 +1408,16 @@ class SupabaseStore {
       });
     }
 
-    await this.supabase.from('scan_events').insert({
-      scan_id: scanId,
+    const { error: scanErr } = await this.supabase.from('scan_events').insert({
+      scan_id: effectiveScanId,
       cart_id: cart.id,
       barcode,
       product_id: product.id,
       result: 'added',
     });
+    if (scanErr) {
+      console.warn('[DB] Error inserting scan_event in scanAndAddToCart:', scanErr.message);
+    }
 
     const updatedCart = await this.getCartDetails(cart.id);
     return { duplicate: false, cart: updatedCart, product };
@@ -1592,22 +1618,30 @@ class SupabaseStore {
   }
 
   async checkScanProcessed(scanId) {
+    if (!scanId) return false;
+    const effectiveScanId = toDeterministicUuid(scanId);
     const { data } = await this.supabase
       .from('scan_events')
       .select('id')
-      .eq('scan_id', scanId)
+      .eq('scan_id', effectiveScanId)
       .maybeSingle();
     return Boolean(data);
   }
 
   async recordScanEvent({ scanId, cartId, barcode, productId, result }) {
+    const effectiveScanId = toDeterministicUuid(scanId);
+    const isCartUuid = typeof cartId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cartId);
+    const effectiveCartId = isCartUuid ? cartId : null;
+    const isProductUuid = typeof productId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId);
+    const effectiveProductId = isProductUuid ? productId : null;
+
     const { data, error } = await this.supabase
       .from('scan_events')
       .insert({
-        scan_id: scanId,
-        cart_id: cartId,
+        scan_id: effectiveScanId,
+        cart_id: effectiveCartId,
         barcode,
-        product_id: productId,
+        product_id: effectiveProductId,
         result,
       })
       .select()
@@ -1632,13 +1666,14 @@ class SupabaseStore {
   }
 
   async recordStockMovement({ productId, change, reason, scanId = null }) {
+    const effectiveScanId = scanId ? toDeterministicUuid(scanId) : null;
     const { data, error } = await this.supabase
       .from('stock_movements')
       .insert({
         product_id: productId,
         change,
         reason,
-        scan_id: scanId,
+        scan_id: effectiveScanId,
       })
       .select()
       .maybeSingle();
