@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db.js';
 import { sseHub } from '../sse.js';
 import { config } from '../config.js';
+import { inventory } from '../system.js';
 
 export const cartRouter = Router();
 
@@ -29,12 +30,38 @@ cartRouter.get('/cart', async (req, res, next) => {
   }
 });
 
-// POST /api/scan (Core scan flow with scanId idempotency)
+// POST /api/scan (Core scan flow with inventory stock tracking & scanId idempotency)
 cartRouter.post('/scan', async (req, res, next) => {
   try {
     const { barcode, scanId, trolleyId } = scanSchema.parse(req.body);
 
-    const result = await db.scanAndAddToCart({ barcode, scanId, trolleyId });
+    const result = await inventory.scanAndProcessProduct({
+      barcode,
+      scanId,
+      trolleyId,
+    });
+
+    if (result.not_found) {
+      return res.status(404).json({
+        error: {
+          code: 'UNKNOWN_BARCODE',
+          message: 'Barcode not in catalog',
+          barcode: result.barcode,
+          scan_id: scanId,
+        }
+      });
+    }
+
+    if (result.out_of_stock) {
+      return res.status(409).json({
+        error: {
+          code: 'OUT_OF_STOCK',
+          message: result.message || 'Product is out of stock',
+          barcode,
+          product: result.product,
+        }
+      });
+    }
 
     // Broadcast cart update to active SSE clients
     sseHub.broadcast('cart', result.cart);
@@ -44,20 +71,12 @@ cartRouter.post('/scan', async (req, res, next) => {
       duplicate: result.duplicate,
       product: result.product,
       cart: result.cart,
+      stock_remaining: result.stock_remaining,
     });
   } catch (err) {
     if (err.name === 'ZodError') {
       const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
-    }
-    if (err.code === 'UNKNOWN_BARCODE') {
-      return res.status(404).json({
-        error: {
-          code: 'UNKNOWN_BARCODE',
-          message: 'Barcode not in catalog',
-          barcode: err.barcode,
-        }
-      });
     }
     next(err);
   }
@@ -69,11 +88,11 @@ cartRouter.patch('/cart/items/:productId', async (req, res, next) => {
     const { quantity, trolleyId } = quantitySchema.parse(req.body);
     const openCart = await db.getOrCreateOpenCart(trolleyId);
 
-    const updatedCart = await db.updateCartItemQuantity({
-      cartId: openCart.id,
-      productId: req.params.productId,
-      quantity,
-    });
+    const updatedCart = await inventory.updateCartItemQuantity(
+      openCart.id,
+      req.params.productId,
+      quantity
+    );
 
     sseHub.broadcast('cart', updatedCart);
     res.json(updatedCart);
@@ -92,13 +111,27 @@ cartRouter.delete('/cart/items/:productId', async (req, res, next) => {
     const trolleyId = (req.query.trolleyId || 'trolley-01').toString();
     const openCart = await db.getOrCreateOpenCart(trolleyId);
 
-    const updatedCart = await db.removeCartItem({
-      cartId: openCart.id,
-      productId: req.params.productId,
-    });
+    const updatedCart = await inventory.removeCartItem(
+      openCart.id,
+      req.params.productId
+    );
 
     sseHub.broadcast('cart', updatedCart);
     res.json(updatedCart);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/cart (Clear all items and restore inventory)
+cartRouter.delete('/cart', async (req, res, next) => {
+  try {
+    const trolleyId = (req.query.trolleyId || 'trolley-01').toString();
+    const openCart = await db.getOrCreateOpenCart(trolleyId);
+
+    const updatedCart = await inventory.clearCart(openCart.id);
+    sseHub.broadcast('cart', updatedCart);
+    res.json({ success: true, cart: updatedCart });
   } catch (err) {
     next(err);
   }
