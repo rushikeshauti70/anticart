@@ -339,6 +339,13 @@ class MemoryStore {
 
     productCache.invalidate(p.barcode);
 
+    // Remove ephemeral cart items
+    for (const [key, item] of this.cartItems.entries()) {
+      if (item.product_id === id) {
+        this.cartItems.delete(key);
+      }
+    }
+
     if (usedInPurchases) {
       p.active = false;
       p.updated_at = new Date().toISOString();
@@ -1237,8 +1244,11 @@ class SupabaseStore {
 
     productCache.invalidate(product.barcode);
 
+    // Remove ephemeral cart items referencing this product across active open carts
+    await this.supabase.from('cart_items').delete().eq('product_id', id);
+
     if (count && count > 0) {
-      // Soft-delete
+      // Soft-delete to preserve historical purchase receipts
       const { error } = await this.supabase
         .from('products')
         .update({ active: false })
@@ -1246,6 +1256,9 @@ class SupabaseStore {
       if (error) throw error;
       return true;
     } else {
+      // Unlink from scan events so scan audit trail remains valid with nullified FK
+      await this.supabase.from('scan_events').update({ product_id: null }).eq('product_id', id);
+
       const { error } = await this.supabase.from('products').delete().eq('id', id);
       if (error) throw error;
       return true;
