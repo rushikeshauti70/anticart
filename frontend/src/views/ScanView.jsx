@@ -129,7 +129,6 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
   const streamRef = useRef(null);
   const scanIntervalRef = useRef(null);
   const lastDetectedRef = useRef({ code: '', time: 0 });
-  const consecutiveReadRef = useRef({ code: '', count: 0, time: 0 });
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -243,8 +242,18 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
         setTorchSupported(Boolean(caps.torch));
 
         const advanced = [];
-        if (caps.focusMode && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
-          advanced.push({ focusMode: 'continuous' });
+        if (caps.focusMode && Array.isArray(caps.focusMode)) {
+          if (caps.focusMode.includes('continuous')) {
+            advanced.push({ focusMode: 'continuous' });
+          } else if (caps.focusMode.includes('macro')) {
+            advanced.push({ focusMode: 'macro' });
+          }
+        }
+        if (caps.exposureMode && Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
+          advanced.push({ exposureMode: 'continuous' });
+        }
+        if (caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
+          advanced.push({ whiteBalanceMode: 'continuous' });
         }
         if (advanced.length > 0) {
           try {
@@ -350,7 +359,7 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     }
   }
 
-  // Multi-tier detection loop with Reticle Cropping and Checksum Verification
+  // High-Speed Multi-Tier Barcode Detection Engine
   async function beginDetectionLoop() {
     let nativeDetector = null;
     if (typeof window.BarcodeDetector !== 'undefined') {
@@ -370,7 +379,11 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       console.warn('[SCANNER] ZXing load note:', e.message);
     }
 
-    // Dedicated offscreen canvas for centered reticle cropping (dynamic 1:1 aspect ratio)
+    // Canvas for downscaled full-view scanning (max 640px wide for rapid CPU execution)
+    const scanCanvas = document.createElement('canvas');
+    const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Canvas for close-up reticle center crop (useful for small barcodes)
     const cropCanvas = document.createElement('canvas');
     const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -383,64 +396,82 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
       try {
         const vw = video.videoWidth;
         const vh = video.videoHeight;
-
-        // Crop central 75% width and 55% height (matching the visual reticle)
-        const cropW = Math.max(1, Math.floor(vw * 0.75));
-        const cropH = Math.max(1, Math.floor(vh * 0.55));
-        const cropX = Math.floor((vw - cropW) / 2);
-        const cropY = Math.floor((vh - cropH) / 2);
-
-        // Keep 1:1 pixel aspect ratio without any non-uniform scaling/stretching
-        if (cropCanvas.width !== cropW || cropCanvas.height !== cropH) {
-          cropCanvas.width = cropW;
-          cropCanvas.height = cropH;
-        }
-        cropCtx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        if (!vw || !vh) return;
 
         let detectedCode = null;
 
-        // Stage 1: Hardware-accelerated native detector directly on video or crop canvas
+        // Stage 1: Hardware-Accelerated Native BarcodeDetector (instant GPU full-frame check)
         if (nativeDetector) {
           try {
-            // First try high-speed cropped region
-            const results = await nativeDetector.detect(cropCanvas);
+            const results = await nativeDetector.detect(video);
             if (results && results.length > 0 && results[0].rawValue) {
               detectedCode = results[0].rawValue;
-            } else {
-              // Fallback to full video frame if angled/partial
-              const fullResults = await nativeDetector.detect(video);
-              if (fullResults && fullResults.length > 0 && fullResults[0].rawValue) {
-                detectedCode = fullResults[0].rawValue;
-              }
             }
-          } catch (e) {}
+          } catch (eNative) {}
         }
 
-        // Stage 2: ZXing software decoder fallback with dual binarizers
+        // Stage 2: ZXing Software Decoder Fallback (optimized downscaled passes)
         if (!detectedCode && zxingModule) {
           const { reader, BinaryBitmap, HybridBinarizer, GlobalHistogramBinarizer, HTMLCanvasElementLuminanceSource } = zxingModule;
+
+          // Prepare downscaled full frame with edge contrast enhancement
+          const targetW = Math.min(640, vw);
+          const targetH = Math.floor(vh * (targetW / vw));
+          if (scanCanvas.width !== targetW || scanCanvas.height !== targetH) {
+            scanCanvas.width = targetW;
+            scanCanvas.height = targetH;
+          }
+          scanCtx.filter = 'contrast(1.25) brightness(1.05)';
+          scanCtx.drawImage(video, 0, 0, targetW, targetH);
+          scanCtx.filter = 'none';
+
+          // Pass 2A: HybridBinarizer on full downscaled view
           try {
-            const lum = new HTMLCanvasElementLuminanceSource(cropCanvas);
+            const lum = new HTMLCanvasElementLuminanceSource(scanCanvas);
+            const bitmap = new BinaryBitmap(new HybridBinarizer(lum));
+            const res = reader.decode(bitmap);
+            if (res && res.getText()) detectedCode = res.getText();
+          } catch (eZxing1) {
+            // Pass 2B: GlobalHistogramBinarizer (superior for packaging glare & shiny surfaces)
             try {
-              const res = reader.decodeWithState(new BinaryBitmap(new HybridBinarizer(lum)));
+              const lum = new HTMLCanvasElementLuminanceSource(scanCanvas);
+              const bitmap = new BinaryBitmap(new GlobalHistogramBinarizer(lum));
+              const res = reader.decode(bitmap);
               if (res && res.getText()) detectedCode = res.getText();
-            } catch (eNotFound1) {
-              // Try GlobalHistogramBinarizer (superior for reflections & glossy labels)
-              const res = reader.decodeWithState(new BinaryBitmap(new GlobalHistogramBinarizer(lum)));
-              if (res && res.getText()) detectedCode = res.getText();
+            } catch (eZxing2) {
+              // Pass 2C: High-density center crop (80% width x 60% height) for small/far barcodes
+              const cropW = Math.floor(targetW * 0.80);
+              const cropH = Math.floor(targetH * 0.60);
+              const cropX = Math.floor((targetW - cropW) / 2);
+              const cropY = Math.floor((targetH - cropH) / 2);
+
+              if (cropCanvas.width !== cropW || cropCanvas.height !== cropH) {
+                cropCanvas.width = cropW;
+                cropCanvas.height = cropH;
+              }
+              cropCtx.drawImage(scanCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+              try {
+                const lumCrop = new HTMLCanvasElementLuminanceSource(cropCanvas);
+                const bitmapCrop = new BinaryBitmap(new HybridBinarizer(lumCrop));
+                const res = reader.decode(bitmapCrop);
+                if (res && res.getText()) detectedCode = res.getText();
+              } catch (eZxing3) {}
             }
-          } catch (eZxing) {}
+          }
+
+          try { reader.reset(); } catch (eReset) {}
         }
 
         if (detectedCode) {
           handleDetectedBarcode(detectedCode);
         }
       } catch (err) {
-        // Routine frame tick error
+        // Frame tick error ignored
       } finally {
         isDecoding = false;
       }
-    }, 160); // 160ms throttle (fast responsiveness without CPU thermal lag)
+    }, 75); // Fast 75ms polling (~13-14 checks/sec) for instantaneous recognition
   }
 
   function handleDetectedBarcode(barcode) {
@@ -448,45 +479,31 @@ export function ScanView({ onNavigateToCart, onNavigateToShop }) {
     const cleanCode = barcode.trim();
     if (!cleanCode) return;
 
-    // Step 1: Strict Checksum Validation
-    // EAN-13, EAN-8, UPC-A, UPC-E modulo-10 checksum validation
+    // Step 1: Checksum validation for EAN / UPC
     const isEanUpc = /^\d{8}$|^\d{12}$|^\d{13}$|^\d{14}$/.test(cleanCode);
     if (isEanUpc && !validateEanUpcChecksum(cleanCode)) {
-      // Reject corrupted digit read immediately
+      // Discard invalid digit transmission immediately
       return;
     }
 
-    // Step 2: Two-Frame Confirmation Guard
-    // Requires 2 consecutive matching reads within 500ms for ALL codes
-    // Eliminates optical noise, rolling-shutter aliasing, and phone screen flicker
+    // Step 2: Instant first-frame debounce (prevent double-firing on held item)
     const now = Date.now();
-    const cr = consecutiveReadRef.current;
-    if (cr.code === cleanCode && now - cr.time < 500) {
-      cr.count += 1;
-    } else {
-      consecutiveReadRef.current = { code: cleanCode, count: 1, time: now };
-      return;
-    }
-    if (cr.count < 2) {
-      return;
-    }
-
-    // Step 3: 1.5s Cooldown Debounce for the exact same physical barcode
     const last = lastDetectedRef.current;
-    if (last.code === cleanCode && now - last.time < 1500) {
+    if (last.code === cleanCode && now - last.time < 2000) {
       return;
     }
 
     lastDetectedRef.current = { code: cleanCode, time: now };
 
-    // Step 4: POS Sensory Feedback
+    // Step 3: Instant POS Audio & Visual Sensory Feedback
     playPosChime();
     triggerHaptic();
     setScanFlash(true);
     setTimeout(() => {
       if (isMountedRef.current) setScanFlash(false);
-    }, 300);
+    }, 350);
 
+    // Step 4: Add to active shopping cart immediately
     submitScan(cleanCode);
   }
 
