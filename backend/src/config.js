@@ -19,6 +19,17 @@ function getCaCert() {
 export const config = {
   port: parseInt(process.env.PORT || '5000', 10),
   frontendOrigin: (process.env.FRONTEND_ORIGIN || '*').trim().replace(/\/+$/, ''),
+  storeId: process.env.STORE_ID || 'store-01',
+  deviceId: process.env.DEVICE_ID || process.env.DEFAULT_DEVICE_ID || 'trolley-01',
+  adminApiKey: process.env.ADMIN_API_KEY || '',
+  scanner: {
+    debounceMs: parseInt(process.env.SCAN_DEBOUNCE_MS || '1500', 10),
+    wedgeTimingThresholdMs: parseInt(process.env.WEDGE_TIMING_THRESHOLD_MS || '50', 10),
+    allowNegativeStock: process.env.ALLOW_NEGATIVE_STOCK === 'true',
+    lowStockThreshold: parseInt(process.env.LOW_STOCK_THRESHOLD || '5', 10),
+    offlineQueueMax: parseInt(process.env.OFFLINE_QUEUE_MAX || '500', 10),
+    offlineQueueFile: process.env.OFFLINE_QUEUE_FILE || path.resolve(process.cwd(), '.offline_queue.json'),
+  },
   supabase: {
     url: process.env.SUPABASE_URL || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',

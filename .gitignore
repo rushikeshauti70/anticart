@@ -19,6 +19,21 @@ frontend/.env
 !frontend/.env.example
 firmware/secrets.h
 !firmware/secrets.h.example
+*.pem
+*.key
+serviceAccount*.json
+
+# Data, offline queues & logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.offline_queue.json
+.offline_queue.json
+*.db
+*.sqlite
+coverage/
+scratch/
 
 # IDE & system metadata
 .DS_Store
@@ -26,9 +41,3 @@ Thumbs.db
 .vscode/
 .idea/
 .memix/
-
-# Log files
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*

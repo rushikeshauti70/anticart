@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { mqttManager } from '../mqtt.js';
 import { db } from '../db.js';
+import { requireAdminOrApiKey } from '../middleware/auth.js';
 
 export const trolleyRouter = Router();
 
@@ -35,7 +36,7 @@ trolleyRouter.get('/trolley/:id/events', async (req, res, next) => {
 });
 
 // POST /api/trolley/:id/command
-trolleyRouter.post('/trolley/:id/command', async (req, res, next) => {
+trolleyRouter.post('/trolley/:id/command', requireAdminOrApiKey, async (req, res, next) => {
   try {
     const deviceId = req.params.id || 'trolley-01';
     const { type, timeoutMs } = commandSchema.parse(req.body);

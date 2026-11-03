@@ -45,6 +45,7 @@ class MemoryStore {
     this.scanEvents = new Map();
     this.purchases = new Map();
     this.purchaseItems = new Map();
+    this.stockMovements = [];
     this.trolleyEvents = [];
     this.trolleyTelemetry = [];
   }
@@ -495,6 +496,62 @@ class MemoryStore {
     const startIndex = (page - 1) * pageSize;
     const paginated = filtered.slice(startIndex, startIndex + pageSize);
     return { data: paginated, total, page, pageSize };
+  }
+
+  async checkScanProcessed(scanId) {
+    return this.scanEvents.has(scanId);
+  }
+
+  async recordScanEvent({ scanId, cartId, barcode, productId, result }) {
+    const record = {
+      id: uuidv4(),
+      scan_id: scanId,
+      cart_id: cartId,
+      barcode,
+      product_id: productId,
+      result,
+      created_at: new Date().toISOString(),
+    };
+    this.scanEvents.set(scanId, record);
+    return record;
+  }
+
+  async updateProductStock(productId, newStock) {
+    const p = this.products.get(productId);
+    if (!p) return null;
+    p.stock = newStock;
+    p.updated_at = new Date().toISOString();
+    productCache.invalidate(p.barcode);
+    return p;
+  }
+
+  async recordStockMovement({ productId, change, reason, scanId = null }) {
+    const record = {
+      id: uuidv4(),
+      product_id: productId,
+      change,
+      reason,
+      scan_id: scanId,
+      created_at: new Date().toISOString(),
+    };
+    this.stockMovements.unshift(record);
+    return record;
+  }
+
+  async getStockMovements(productId) {
+    if (productId) {
+      return this.stockMovements.filter(m => m.product_id === productId);
+    }
+    return this.stockMovements;
+  }
+
+  async clearCartItems(cartId) {
+    for (const [key, item] of this.cartItems.entries()) {
+      if (item.cart_id === cartId) {
+        this.cartItems.delete(key);
+      }
+    }
+    return this.getCartDetails(cartId);
   }
 }
 
@@ -1018,6 +1075,86 @@ class SupabaseStore {
 
     if (error) throw error;
     return { data: data || [], total: count || 0, page, pageSize };
+  }
+
+  async checkScanProcessed(scanId) {
+    const { data } = await this.supabase
+      .from('scan_events')
+      .select('id')
+      .eq('scan_id', scanId)
+      .maybeSingle();
+    return Boolean(data);
+  }
+
+  async recordScanEvent({ scanId, cartId, barcode, productId, result }) {
+    const { data, error } = await this.supabase
+      .from('scan_events')
+      .insert({
+        scan_id: scanId,
+        cart_id: cartId,
+        barcode,
+        product_id: productId,
+        result,
+      })
+      .select()
+      .maybeSingle();
+    if (error) {
+      console.warn('[DB] Error recording scan event:', error.message);
+      return null;
+    }
+    return data;
+  }
+
+  async updateProductStock(productId, newStock) {
+    const { data, error } = await this.supabase
+      .from('products')
+      .update({ stock: newStock })
+      .eq('id', productId)
+      .select()
+      .single();
+    if (error) throw error;
+    if (data?.barcode) productCache.invalidate(data.barcode);
+    return data;
+  }
+
+  async recordStockMovement({ productId, change, reason, scanId = null }) {
+    const { data, error } = await this.supabase
+      .from('stock_movements')
+      .insert({
+        product_id: productId,
+        change,
+        reason,
+        scan_id: scanId,
+      })
+      .select()
+      .maybeSingle();
+    if (error) {
+      console.warn('[DB] Note on stock_movements:', error.message);
+      return null;
+    }
+    return data;
+  }
+
+  async getStockMovements(productId) {
+    let query = this.supabase
+      .from('stock_movements')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (productId) {
+      query = query.eq('product_id', productId);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+
+  async clearCartItems(cartId) {
+    const { error } = await this.supabase
+      .from('cart_items')
+      .delete()
+      .eq('cart_id', cartId);
+    if (error) throw error;
+    return this.getCartDetails(cartId);
   }
 }
 

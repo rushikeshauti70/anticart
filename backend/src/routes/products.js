@@ -2,16 +2,22 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { parse } from 'csv-parse/sync';
 import { db } from '../db.js';
+import { inventory } from '../system.js';
+import { requireAdminOrApiKey } from '../middleware/auth.js';
 
 export const productsRouter = Router();
 
 const productSchema = z.object({
   barcode: z.string().trim().min(1, 'Barcode is required'),
   name: z.string().trim().min(1, 'Product name is required'),
+  sku: z.string().trim().optional().nullable(),
+  unit: z.string().trim().default('pc'),
   category: z.string().trim().default('General'),
   price: z.coerce.number().min(0, 'Price must be non-negative'),
   gst_percent: z.coerce.number().min(0).max(100).default(0),
   stock: z.union([z.coerce.number().int().min(0), z.null()]).optional().nullable(),
+  autoAddCartId: z.string().optional(),
+  autoAddScanId: z.string().optional(),
 });
 
 // GET /api/products
@@ -43,12 +49,21 @@ productsRouter.get('/products/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/products
-productsRouter.post('/products', async (req, res, next) => {
+// POST /api/products (Create with optional auto-add to active cart)
+productsRouter.post('/products', requireAdminOrApiKey, async (req, res, next) => {
   try {
     const validated = productSchema.parse(req.body);
-    const product = await db.createProduct(validated);
-    res.status(201).json(product);
+    const { autoAddCartId, autoAddScanId, ...productData } = validated;
+
+    const result = await inventory.createProduct(productData, {
+      autoAddCartId,
+      autoAddScanId,
+    });
+
+    res.status(201).json({
+      ...result.product,
+      autoAddResult: result.autoAddResult,
+    });
   } catch (err) {
     if (err.name === 'ZodError') {
       const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
@@ -61,8 +76,40 @@ productsRouter.post('/products', async (req, res, next) => {
   }
 });
 
+// GET /api/inventory/movements (Stock audit movements log)
+productsRouter.get('/inventory/movements', async (req, res, next) => {
+  try {
+    const { productId } = req.query;
+    const movements = await db.getStockMovements(productId);
+    res.json({ data: movements });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/inventory/adjust (Manual stock adjustment with audit log)
+productsRouter.post('/inventory/adjust', requireAdminOrApiKey, async (req, res, next) => {
+  try {
+    const adjustSchema = z.object({
+      productId: z.string().min(1, 'Product ID is required'),
+      delta: z.coerce.number().int(),
+      reason: z.enum(['restock', 'adjustment', 'sale', 'cancellation']).default('adjustment'),
+    });
+    const { productId, delta, reason } = adjustSchema.parse(req.body);
+
+    const result = await inventory.adjustStock(productId, delta, reason);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    if (err.name === 'ZodError') {
+      const msg = err.issues?.[0]?.message || err.errors?.[0]?.message || err.message;
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: msg } });
+    }
+    next(err);
+  }
+});
+
 // PUT /api/products/:id
-productsRouter.put('/products/:id', async (req, res, next) => {
+productsRouter.put('/products/:id', requireAdminOrApiKey, async (req, res, next) => {
   try {
     const partialSchema = productSchema.partial();
     const validated = partialSchema.parse(req.body);
@@ -84,7 +131,7 @@ productsRouter.put('/products/:id', async (req, res, next) => {
 });
 
 // DELETE /api/products/:id
-productsRouter.delete('/products/:id', async (req, res, next) => {
+productsRouter.delete('/products/:id', requireAdminOrApiKey, async (req, res, next) => {
   try {
     const success = await db.deleteProduct(req.params.id);
     if (!success) {
@@ -97,7 +144,7 @@ productsRouter.delete('/products/:id', async (req, res, next) => {
 });
 
 // POST /api/products/import
-productsRouter.post('/products/import', async (req, res, next) => {
+productsRouter.post('/products/import', requireAdminOrApiKey, async (req, res, next) => {
   try {
     let rows = [];
 

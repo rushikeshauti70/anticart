@@ -9,6 +9,7 @@ import { cartRouter } from './routes/cart.js';
 import { purchasesRouter } from './routes/purchases.js';
 import { trolleyRouter } from './routes/trolley.js';
 import { optionalJwtAuth } from './middleware/auth.js';
+import { scanner, mqttClient } from './system.js';
 
 const app = express();
 
@@ -93,15 +94,37 @@ const server = app.listen(config.port, () => {
   console.log(`[HTTP] Health check available at http://localhost:${config.port}/health`);
   console.log(`[HTTP] SSE stream available at http://localhost:${config.port}/api/stream`);
 
-  // Start MQTT subscriber
+  // Start legacy MQTT manager
   mqttManager.init();
+
+  // Start resilient scanner & inventory MQTT client
+  mqttClient.connect();
+
+  // Optionally listen for Keyboard-Wedge USB scanner input on stdin
+  if (process.env.ENABLE_STDIN_SCANNER === 'true') {
+    process.stdin.setEncoding('utf8');
+    if (process.stdin.setRawMode) process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', (chunk) => {
+      for (const char of chunk) {
+        if (char === '\u0003') { // Ctrl+C
+          process.kill(process.pid, 'SIGINT');
+          return;
+        }
+        scanner.feedKeystroke(char);
+      }
+    });
+    console.log('[SCANNER] Listening for Keyboard-Wedge USB scanner input on stdin...');
+  }
 });
 
 // Graceful shutdown
-function gracefulShutdown(signal) {
+async function gracefulShutdown(signal) {
   console.log(`\n[SHUTDOWN] Received ${signal}. Closing server resources...`);
   sseHub.closeAll();
   mqttManager.shutdown();
+  await mqttClient.shutdown();
+  scanner.reset();
 
   server.close(() => {
     console.log('[SHUTDOWN] HTTP server closed. Process terminating cleanly.');
