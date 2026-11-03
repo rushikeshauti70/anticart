@@ -224,3 +224,47 @@ Alternatively, use the **Test simulation** toggle directly on the **Trolley** pa
 | Free-tier backend sleep | Render free tier spins down after 15 min of inactivity | Set up an external uptime monitor (e.g., UptimeRobot or Cron-job.org) to ping `/health` every 5 minutes. |
 #   a n t i c a r t  
  
+
+---
+
+## 7. Barcode Scanner & POS Auto-Inventory Pipeline
+
+### System Architecture
+```
+[USB HID Scanner / Web Camera]
+           │
+           ▼
+[Keystroke Wedge Buffer (<50ms filter) + GS1 Modulo-10 Checksum + 1500ms Debounce]
+           │
+           ├──────────────────────────────┐
+           ▼                              ▼
+[MQTT TLS Publisher]             [Inventory Service Lock]
+- Topic: device/{id}/scan        - Atomic Stock Decrement
+- QoS 1, Retained LWT            - Stock Movement Audit Log
+- Offline Queue (.offline_queue) - Out-of-Stock / Low-Stock Alerts
+                                 - Auto-Add on Catalog Registration
+```
+
+### Running the Barcode & Inventory Test Suite
+```bash
+node backend/test/scanner_system.test.js
+```
+Runs 15 automated integration tests verifying:
+- GS1 Modulo-10 checksums (EAN-13, UPC-A, EAN-8)
+- 1500ms debounce deduplication & <50ms keyboard wedge detection
+- MQTT offline disk queue (FIFO reconnect flush)
+- Atomic stock decrements, concurrent locks, and idempotency
+- Real-time inventory movement audit trail
+
+### Interactive Hardware Simulator
+```bash
+node backend/scripts/simulate_scanner.js
+```
+Simulates real barcode scanner hardware with interactive options:
+- Scan standard demo barcodes (Milk UPC-A, Ponds EAN-13, Maggi, Lays)
+- Test burst keystroke timing (15ms hardware wedge vs manual typing)
+- Test unknown barcode handling and invalid checksum rejection
+
+### Database Migration
+If deploying to Supabase PostgreSQL, execute the migration:
+`backend/sql/migrations/002_inventory_stock_movements.sql`
