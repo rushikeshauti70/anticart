@@ -5,11 +5,13 @@ import { sseHub } from './sse.js';
 import { mqttManager } from './mqtt.js';
 import { healthRouter } from './routes/health.js';
 import { productsRouter } from './routes/products.js';
+import { catalogRouter } from './routes/catalog.js';
+import { reportsRouter } from './routes/reports.js';
 import { cartRouter } from './routes/cart.js';
 import { purchasesRouter } from './routes/purchases.js';
 import { trolleyRouter } from './routes/trolley.js';
 import { optionalJwtAuth } from './middleware/auth.js';
-import { scanner, mqttClient } from './system.js';
+import { scanner, mqttClient, eventLogger } from './system.js';
 
 const app = express();
 
@@ -62,6 +64,8 @@ app.get('/api/stream', (req, res) => {
 
 // API Routes
 app.use('/api', productsRouter);
+app.use('/api', catalogRouter);
+app.use('/api', reportsRouter);
 app.use('/api', cartRouter);
 app.use('/api', purchasesRouter);
 app.use('/api', trolleyRouter);
@@ -124,6 +128,7 @@ async function gracefulShutdown(signal) {
   sseHub.closeAll();
   mqttManager.shutdown();
   await mqttClient.shutdown();
+  await eventLogger.shutdown();
   scanner.reset();
 
   server.close(() => {

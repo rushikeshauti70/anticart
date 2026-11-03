@@ -40,6 +40,7 @@ export const productCache = new ProductCache();
 class MemoryStore {
   constructor() {
     this.products = new Map();
+    this.catalogProducts = new Map();
     this.carts = new Map();
     this.cartItems = new Map(); // cart_id:product_id -> item
     this.scanEvents = new Map();
@@ -48,6 +49,172 @@ class MemoryStore {
     this.stockMovements = [];
     this.trolleyEvents = [];
     this.trolleyTelemetry = [];
+  }
+
+  // --- Master Catalog Products ---
+  async getCatalogProducts({ search = '', category = '', page = 1, pageSize = 50 } = {}) {
+    let list = Array.from(this.catalogProducts.values()).filter(p => p.is_active !== false);
+
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(p =>
+        (p.name && p.name.toLowerCase().includes(q)) ||
+        (p.barcode && p.barcode.includes(q)) ||
+        (p.sku && p.sku.toLowerCase().includes(q)) ||
+        (p.brand && p.brand.toLowerCase().includes(q))
+      );
+    }
+
+    if (category && category !== 'All') {
+      list = list.filter(p => p.category && p.category.toLowerCase() === category.toLowerCase());
+    }
+
+    list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const enriched = list.map(cp => {
+      let invProduct = null;
+      for (const p of this.products.values()) {
+        if (p.active !== false && (p.catalog_product_id === cp.id || (cp.barcode && p.barcode === cp.barcode) || (cp.sku && p.sku === cp.sku))) {
+          invProduct = p;
+          break;
+        }
+      }
+      return {
+        ...cp,
+        inventory_id: invProduct?.id || null,
+        stock: invProduct?.stock ?? null,
+        stock_qty: invProduct?.stock ?? null,
+        inventory_price: invProduct?.price ?? cp.default_price,
+        in_inventory: Boolean(invProduct),
+        stock_status: !invProduct ? 'not_stocked' : (invProduct.stock === 0 ? 'out_of_stock' : (invProduct.stock <= 5 ? 'low_stock' : 'in_stock')),
+      };
+    });
+
+    const total = enriched.length;
+    const startIndex = (page - 1) * pageSize;
+    const paginated = enriched.slice(startIndex, startIndex + pageSize);
+
+    return { data: paginated, total, page, pageSize };
+  }
+
+  async getCatalogProductById(id) {
+    const cp = this.catalogProducts.get(id);
+    if (!cp) return null;
+    let invProduct = null;
+    for (const p of this.products.values()) {
+      if (p.active !== false && (p.catalog_product_id === cp.id || (cp.barcode && p.barcode === cp.barcode) || (cp.sku && p.sku === cp.sku))) {
+        invProduct = p;
+        break;
+      }
+    }
+    return {
+      ...cp,
+      inventory_id: invProduct?.id || null,
+      stock: invProduct?.stock ?? null,
+      stock_qty: invProduct?.stock ?? null,
+      inventory_price: invProduct?.price ?? cp.default_price,
+      in_inventory: Boolean(invProduct),
+      stock_status: !invProduct ? 'not_stocked' : (invProduct.stock === 0 ? 'out_of_stock' : (invProduct.stock <= 5 ? 'low_stock' : 'in_stock')),
+    };
+  }
+
+  async getCatalogProductBySkuOrBarcode(identifier) {
+    if (!identifier) return null;
+    for (const cp of this.catalogProducts.values()) {
+      if (cp.is_active !== false && (cp.sku === identifier || cp.barcode === identifier)) {
+        return this.getCatalogProductById(cp.id);
+      }
+    }
+    return null;
+  }
+
+  async createCatalogProduct(data) {
+    const id = data.id || 'cat-' + Math.random().toString(36).substring(2, 9);
+    const now = new Date().toISOString();
+    for (const cp of this.catalogProducts.values()) {
+      if (cp.is_active !== false) {
+        if (data.sku && cp.sku && cp.sku.toLowerCase() === data.sku.toLowerCase()) {
+          const err = new Error(`Catalog product with SKU "${data.sku}" already exists`);
+          err.code = 'DUPLICATE_SKU';
+          throw err;
+        }
+        if (data.barcode && cp.barcode === data.barcode) {
+          const err = new Error(`Catalog product with barcode "${data.barcode}" already exists`);
+          err.code = 'DUPLICATE_BARCODE';
+          throw err;
+        }
+      }
+    }
+    const item = {
+      id,
+      barcode: data.barcode || null,
+      name: data.name,
+      sku: data.sku,
+      category: data.category || 'General',
+      brand: data.brand || null,
+      description: data.description || null,
+      image_url: data.image_url || null,
+      default_price: parseFloat(data.default_price || data.price || 0),
+      unit: data.unit || 'pc',
+      is_active: data.is_active !== undefined ? Boolean(data.is_active) : true,
+      created_at: now,
+      updated_at: now,
+    };
+    this.catalogProducts.set(id, item);
+    return item;
+  }
+
+  async updateCatalogProduct(id, updates) {
+    const cp = this.catalogProducts.get(id);
+    if (!cp) return null;
+    const updated = {
+      ...cp,
+      ...updates,
+      default_price: updates.default_price !== undefined ? parseFloat(updates.default_price) : cp.default_price,
+      updated_at: new Date().toISOString(),
+    };
+    this.catalogProducts.set(id, updated);
+    return updated;
+  }
+
+  async deleteCatalogProduct(id) {
+    const cp = this.catalogProducts.get(id);
+    if (!cp) return false;
+    cp.is_active = false;
+    cp.updated_at = new Date().toISOString();
+    this.catalogProducts.set(id, cp);
+    return true;
+  }
+
+  async linkCatalogProductToInventory(catalogId, { price, stock = 10, gst_percent = 5.0 } = {}) {
+    const cp = this.catalogProducts.get(catalogId);
+    if (!cp) {
+      const err = new Error('Catalog product not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    let existing = null;
+    for (const p of this.products.values()) {
+      if (p.catalog_product_id === catalogId || (cp.barcode && p.barcode === cp.barcode) || (cp.sku && p.sku === cp.sku)) {
+        existing = p;
+        break;
+      }
+    }
+    if (existing) {
+      return existing;
+    }
+    const invProduct = await this.createProduct({
+      barcode: cp.barcode || `AUTO-${cp.sku}-${Date.now() % 10000}`,
+      name: cp.name,
+      sku: cp.sku,
+      unit: cp.unit,
+      category: cp.category,
+      price: price !== undefined ? parseFloat(price) : cp.default_price,
+      gst_percent: parseFloat(gst_percent),
+      stock: parseInt(stock, 10),
+    });
+    invProduct.catalog_product_id = cp.id;
+    return invProduct;
   }
 
   // --- Products ---
@@ -562,6 +729,165 @@ class SupabaseStore {
       auth: { persistSession: false },
     });
   }
+
+  // --- Master Catalog (Supabase) ---
+  async getCatalogProducts({ search = '', category = '', page = 1, pageSize = 50 } = {}) {
+    try {
+      let query = this.supabase
+        .from('catalog_products')
+        .select('*, products(id, stock, price, active)', { count: 'exact' })
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+
+      if (search) {
+        const cleanSearch = String(search).replace(/[,()]/g, ' ').trim();
+        if (cleanSearch) {
+          query = query.or(`name.ilike.%${cleanSearch}%,sku.ilike.%${cleanSearch}%,barcode.ilike.%${cleanSearch}%`);
+        }
+      }
+      if (category && category !== 'All') {
+        query = query.eq('category', category);
+      }
+
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      const { data, count, error } = await query.range(from, to);
+
+      if (error) throw error;
+
+      const enriched = (data || []).map(cp => {
+        const inv = Array.isArray(cp.products) ? cp.products.find(p => p.active !== false) : cp.products;
+        return {
+          ...cp,
+          inventory_id: inv?.id || null,
+          stock_qty: inv?.stock ?? null,
+          inventory_price: inv?.price ?? cp.default_price,
+          in_inventory: Boolean(inv),
+          stock_status: !inv ? 'not_stocked' : (inv.stock === 0 ? 'out_of_stock' : (inv.stock <= 5 ? 'low_stock' : 'in_stock')),
+        };
+      });
+
+      return { data: enriched, total: count || 0, page, pageSize };
+    } catch (err) {
+      console.warn('[DB] Supabase getCatalogProducts fallback:', err.message);
+      return { data: [], total: 0, page, pageSize };
+    }
+  }
+
+  async getCatalogProductById(id) {
+    try {
+      const { data, error } = await this.supabase
+        .from('catalog_products')
+        .select('*, products(id, stock, price, active)')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      const inv = Array.isArray(data.products) ? data.products.find(p => p.active !== false) : data.products;
+      return {
+        ...data,
+        inventory_id: inv?.id || null,
+        stock_qty: inv?.stock ?? null,
+        inventory_price: inv?.price ?? data.default_price,
+        in_inventory: Boolean(inv),
+        stock_status: !inv ? 'not_stocked' : (inv.stock === 0 ? 'out_of_stock' : (inv.stock <= 5 ? 'low_stock' : 'in_stock')),
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async getCatalogProductBySkuOrBarcode(identifier) {
+    try {
+      let { data, error } = await this.supabase
+        .from('catalog_products')
+        .select('*, products(id, stock, price, active)')
+        .or(`sku.eq.${identifier},barcode.eq.${identifier}`)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (error || !data) return null;
+      const inv = Array.isArray(data.products) ? data.products.find(p => p.active !== false) : data.products;
+      return {
+        ...data,
+        inventory_id: inv?.id || null,
+        stock_qty: inv?.stock ?? null,
+        inventory_price: inv?.price ?? data.default_price,
+        in_inventory: Boolean(inv),
+        stock_status: !inv ? 'not_stocked' : (inv.stock === 0 ? 'out_of_stock' : (inv.stock <= 5 ? 'low_stock' : 'in_stock')),
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async createCatalogProduct(data) {
+    const item = {
+      barcode: data.barcode || null,
+      name: data.name,
+      sku: data.sku,
+      category: data.category || 'General',
+      brand: data.brand || null,
+      description: data.description || null,
+      image_url: data.image_url || null,
+      default_price: parseFloat(data.default_price || data.price || 0),
+      unit: data.unit || 'pc',
+      is_active: data.is_active !== undefined ? Boolean(data.is_active) : true,
+    };
+    const { data: created, error } = await this.supabase
+      .from('catalog_products')
+      .insert(item)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return created;
+  }
+
+  async updateCatalogProduct(id, updates) {
+    const { data: updated, error } = await this.supabase
+      .from('catalog_products')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    return updated;
+  }
+
+  async deleteCatalogProduct(id) {
+    const { error } = await this.supabase
+      .from('catalog_products')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+    return true;
+  }
+
+  async linkCatalogProductToInventory(catalogId, { price, stock = 10, gst_percent = 5.0 } = {}) {
+    const cp = await this.getCatalogProductById(catalogId);
+    if (!cp) {
+      const err = new Error('Catalog product not found');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    const invProduct = await this.createProduct({
+      barcode: cp.barcode || `AUTO-${cp.sku}-${Date.now() % 10000}`,
+      name: cp.name,
+      sku: cp.sku,
+      unit: cp.unit,
+      category: cp.category,
+      price: price !== undefined ? parseFloat(price) : cp.default_price,
+      gst_percent: parseFloat(gst_percent),
+      stock: parseInt(stock, 10),
+    });
+    try {
+      await this.supabase.from('products').update({ catalog_product_id: cp.id }).eq('id', invProduct.id);
+    } catch (e) {}
+    invProduct.catalog_product_id = cp.id;
+    return invProduct;
+  }
+
+
+
 
   async getProducts({ search = '', category = '', page = 1, pageSize = 50 } = {}) {
     let query = this.supabase

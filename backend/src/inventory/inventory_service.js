@@ -256,6 +256,162 @@ export class InventoryService extends EventEmitter {
   }
 
   /**
+   * Add a product directly from the Product Catalog to the active cart.
+   * Reuses the exact same concurrency mutex lock, atomic stock decrement,
+   * audit logging, and MQTT publication as the scan flow.
+   */
+  async addCatalogItemToCart({ catalogId, productId, quantity = 1, requestId, trolleyId = 'trolley-01', sessionId }) {
+    const effectiveSessionId = sessionId || trolleyId;
+    const effectiveRequestId = requestId || ('req-' + Math.random().toString(36).substring(2, 10));
+    const requestedQty = Math.max(1, parseInt(quantity, 10) || 1);
+
+    // 1. Idempotency check via requestId
+    const existingCart = await db.getOrCreateOpenCart(effectiveSessionId);
+    if (db.checkScanProcessed && await db.checkScanProcessed(effectiveRequestId)) {
+      const cart = await db.getCartDetails(existingCart.id);
+      return {
+        success: true,
+        duplicate: true,
+        cart,
+        message: 'Catalog add already processed (idempotent duplicate)',
+      };
+    }
+
+    // 2. Resolve inventory product
+    let product = null;
+    let catalogItem = null;
+    if (catalogId) {
+      catalogItem = await db.getCatalogProductById(catalogId);
+      if (!catalogItem) {
+        const err = new Error('Catalog product not found');
+        err.code = 'CATALOG_NOT_FOUND';
+        throw err;
+      }
+      if (catalogItem.is_active === false) {
+        const err = new Error(`Catalog product "${catalogItem.name}" is deactivated`);
+        err.code = 'PRODUCT_INACTIVE';
+        throw err;
+      }
+      if (catalogItem.inventory_id) {
+        product = await db.getProductById(catalogItem.inventory_id);
+      } else {
+        product = await db.linkCatalogProductToInventory(catalogId, {
+          price: catalogItem.default_price,
+          stock: 15,
+        });
+      }
+    } else if (productId) {
+      product = await db.getProductById(productId);
+    }
+
+    if (!product) {
+      const err = new Error('Product not found in inventory');
+      err.code = 'PRODUCT_NOT_FOUND';
+      throw err;
+    }
+
+    // 3. Acquire mutex lock for this product to prevent concurrency race conditions
+    const releaseLock = await this.acquireLock(product.id);
+    try {
+      const freshProduct = await db.getProductById(product.id);
+      const currentStock = freshProduct?.stock ?? null;
+
+      // Stock availability check
+      if (currentStock !== null && currentStock < requestedQty && !this.allowNegativeStock) {
+        const outOfStockPayload = {
+          product_id: freshProduct.id,
+          barcode: freshProduct.barcode,
+          name: freshProduct.name,
+          current_stock: currentStock,
+          requested_qty: requestedQty,
+          request_id: effectiveRequestId,
+          source: 'catalog',
+          message: `Product "${freshProduct.name}" has insufficient stock (${currentStock} available, ${requestedQty} requested)`,
+        };
+        this.emit('out_of_stock', outOfStockPayload);
+        return {
+          success: false,
+          out_of_stock: true,
+          product: freshProduct,
+          message: outOfStockPayload.message,
+        };
+      }
+
+      // 4. Atomic stock decrement & movement record
+      let newStock = currentStock;
+      if (currentStock !== null) {
+        newStock = currentStock - requestedQty;
+        await db.updateProductStock(freshProduct.id, newStock);
+        await db.recordStockMovement({
+          productId: freshProduct.id,
+          change: -requestedQty,
+          reason: 'sale',
+          scanId: effectiveRequestId,
+        });
+        this.cache.invalidate(freshProduct.barcode);
+      }
+
+      // 5. Add / Increment line item in cart
+      let updatedCart;
+      for (let i = 0; i < requestedQty; i++) {
+        const subScanId = i === 0 ? effectiveRequestId : `${effectiveRequestId}-${i}`;
+        const res = await db.scanAndAddToCart({
+          barcode: freshProduct.barcode,
+          scanId: subScanId,
+          trolleyId: effectiveSessionId,
+        });
+        updatedCart = res.cart;
+      }
+
+      const cartItem = updatedCart.items.find((i) => i.product_id === freshProduct.id);
+
+      // 6. Check low stock threshold
+      if (newStock !== null && newStock <= this.lowStockThreshold) {
+        this.emit('low_stock', {
+          product_id: freshProduct.id,
+          barcode: freshProduct.barcode,
+          name: freshProduct.name,
+          stock_qty: newStock,
+          threshold: this.lowStockThreshold,
+          source: 'catalog',
+        });
+      }
+
+      // 7. Emit item_added with source = 'catalog'
+      const itemAddedEvent = {
+        scan_id: effectiveRequestId,
+        request_id: effectiveRequestId,
+        source: 'catalog',
+        barcode: freshProduct.barcode,
+        product_id: freshProduct.id,
+        name: freshProduct.name,
+        qty: cartItem ? cartItem.quantity : requestedQty,
+        price: freshProduct.price,
+        line_total: cartItem ? cartItem.line_total : freshProduct.price * requestedQty,
+        cart_total: updatedCart.total,
+        timestamp: new Date().toISOString(),
+      };
+      this.emit('item_added', { sessionId: effectiveSessionId, ...itemAddedEvent });
+
+      if (newStock !== null) {
+        this.emit('stock_updated', { productId: freshProduct.id, stockQty: newStock });
+      }
+
+      return {
+        success: true,
+        duplicate: false,
+        source: 'catalog',
+        product: freshProduct,
+        cart: updatedCart,
+        item: cartItem,
+        stock_remaining: newStock,
+      };
+    } finally {
+      releaseLock();
+    }
+  }
+
+  /**
    * Adjust quantity of an item in the cart (+ or -), keeping stock atomic.
    */
   async updateCartItemQuantity(cartId, productId, newQuantity) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Upload, Trash2, Edit2, AlertCircle } from 'lucide-react';
+import { Search, Plus, Upload, Trash2, Edit2, AlertCircle, ShoppingCart, FileSpreadsheet, CheckCircle2, PackagePlus, ArrowRight, Minus } from 'lucide-react';
 import { api } from '../api';
 
 const CATEGORIES = [
@@ -10,26 +10,43 @@ const CATEGORIES = [
   'Beverages',
   'Electronics',
   'Stationery',
+  'Personal Care',
 ];
 
 export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearInitialBarcode }) {
-  const [products, setProducts] = useState([]);
+  const [viewMode, setViewMode] = useState('catalog'); // 'catalog' (Master Catalog) | 'inventory' (Store Inventory)
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [inventoryProducts, setInventoryProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
+
+  // Quantity selection state for each catalog item: { [catalogId]: number }
+  const [quantities, setQuantities] = useState({});
+  const [addingToCartId, setAddingToCartId] = useState(null);
+
+  // Modals & Notices
   const [showAddModal, setShowAddModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(null); // catalog product to stock
+  const [stockPrice, setStockPrice] = useState('');
+  const [stockCount, setStockCount] = useState('15');
   const [editingProduct, setEditingProduct] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Form states
+  // Form states for manual product add
   const [formBarcode, setFormBarcode] = useState('');
   const [formName, setFormName] = useState('');
+  const [formSku, setFormSku] = useState('');
   const [formCategory, setFormCategory] = useState('General');
   const [formPrice, setFormPrice] = useState('');
   const [formGst, setFormGst] = useState('5.0');
-  const [formStock, setFormStock] = useState('');
+  const [formStock, setFormStock] = useState('20');
+
+  // Import state
+  const [importCsv, setImportCsv] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     if (initialBarcodeToAdd) {
@@ -40,9 +57,134 @@ export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearI
     }
   }, [initialBarcodeToAdd]);
 
-  // Import state
-  const [importCsv, setImportCsv] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
+  useEffect(() => {
+    loadData();
+  }, [category, viewMode]);
+
+  async function loadData() {
+    setLoading(true);
+    setErrorMessage('');
+    try {
+      if (viewMode === 'catalog') {
+        const res = await api.getCatalog({
+          search,
+          category: category === 'All' ? '' : category,
+          pageSize: 60,
+        });
+        setCatalogItems(res.data || []);
+      } else {
+        const res = await api.getProducts({
+          search,
+          category: category === 'All' ? '' : category,
+          pageSize: 60,
+        });
+        setInventoryProducts(res.data || []);
+      }
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to load products');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleSearchSubmit(e) {
+    e.preventDefault();
+    loadData();
+  }
+
+  function getQty(id) {
+    return quantities[id] || 1;
+  }
+
+  function setQty(id, val) {
+    const nextVal = Math.max(1, Math.min(99, val));
+    setQuantities((prev) => ({ ...prev, [id]: nextVal }));
+  }
+
+  // 1-Click Add directly from Product Catalog to Active Cart
+  async function handleAddToCart(item) {
+    const qty = getQty(item.id);
+    setAddingToCartId(item.id);
+    setErrorMessage('');
+    try {
+      const res = await api.addCatalogItemToCart({
+        catalogId: item.id,
+        productId: item.inventory_id,
+        quantity: qty,
+        requestId: `cat-${item.id}-${Date.now()}`,
+        trolleyId: 'trolley-01',
+      });
+
+      // Sensory feedback
+      playAddChime();
+      setSuccessMessage(`Added ${qty}× ${item.name} to Cart`);
+      setTimeout(() => setSuccessMessage(''), 3500);
+
+      // Decrement local stock badge dynamically
+      if (item.stock_qty !== null && item.stock_qty !== undefined) {
+        const nextStock = Math.max(0, item.stock_qty - qty);
+        setCatalogItems((prev) =>
+          prev.map((c) =>
+            c.id === item.id
+              ? {
+                  ...c,
+                  stock_qty: nextStock,
+                  stock_status: nextStock === 0 ? 'out_of_stock' : (nextStock <= 5 ? 'low_stock' : 'in_stock'),
+                }
+              : c
+          )
+        );
+      }
+    } catch (err) {
+      setErrorMessage(err.message || 'Could not add product to cart');
+    } finally {
+      setAddingToCartId(null);
+    }
+  }
+
+  // Stock unstocked catalog item into store inventory
+  async function handleStockCatalogItem(e) {
+    e.preventDefault();
+    if (!showStockModal) return;
+    try {
+      await api.linkCatalogToInventory(showStockModal.id, {
+        price: stockPrice || showStockModal.default_price,
+        stock: parseInt(stockCount, 10) || 15,
+        gst_percent: 5.0,
+      });
+      setShowStockModal(null);
+      setSuccessMessage(`Stocked ${showStockModal.name} into store inventory!`);
+      setTimeout(() => setSuccessMessage(''), 3000);
+      loadData();
+    } catch (err) {
+      setErrorMessage(err.message || 'Failed to stock product into inventory');
+    }
+  }
+
+  function openStockModal(item) {
+    setShowStockModal(item);
+    setStockPrice(String(item.default_price || ''));
+    setStockCount('15');
+  }
+
+  function playAddChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(987, ctx.currentTime);
+      osc.frequency.setValueAtTime(1318, ctx.currentTime + 0.06);
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.16);
+    } catch (e) {}
+  }
 
   async function handleAiLookup() {
     if (!formBarcode.trim()) return;
@@ -56,8 +198,6 @@ export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearI
         if (res.suggestion.gst_percent !== undefined) setFormGst(String(res.suggestion.gst_percent));
         setSuccessMessage('Auto-filled product suggestions via AI');
         setTimeout(() => setSuccessMessage(''), 3000);
-      } else if (!res.configured) {
-        setErrorMessage('AI features require GOOGLE_API_KEY configured in backend environment.');
       }
     } catch (err) {
       console.warn('AI lookup warning:', err.message);
@@ -66,64 +206,18 @@ export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearI
     }
   }
 
-  useEffect(() => {
-    loadProducts();
-  }, [category]);
-
-  async function loadProducts() {
-    setLoading(true);
-    setErrorMessage('');
-    try {
-      const res = await api.getProducts({
-        search,
-        category: category === 'All' ? '' : category,
-      });
-      setProducts(res.data || []);
-    } catch (err) {
-      setErrorMessage(err.message || 'Failed to load products');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleSearchSubmit(e) {
-    e.preventDefault();
-    loadProducts();
-  }
-
-  function openCreateModal() {
-    setEditingProduct(null);
-    setFormBarcode('');
-    setFormName('');
-    setFormCategory('General');
-    setFormPrice('');
-    setFormGst('5.0');
-    setFormStock('');
-    setShowAddModal(true);
-  }
-
-  function openEditModal(prod) {
-    setEditingProduct(prod);
-    setFormBarcode(prod.barcode);
-    setFormName(prod.name);
-    setFormCategory(prod.category);
-    setFormPrice(String(prod.price));
-    setFormGst(String(prod.gst_percent));
-    setFormStock(prod.stock !== null ? String(prod.stock) : '');
-    setShowAddModal(true);
-  }
-
   async function handleSaveProduct(e) {
     e.preventDefault();
-    setErrorMessage('');
     try {
       const payload = {
-        barcode: formBarcode.trim(),
+        barcode: formBarcode.trim() || undefined,
         name: formName.trim(),
-        category: formCategory.trim(),
+        sku: formSku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
+        category: formCategory,
         price: parseFloat(formPrice),
-        gst_percent: parseFloat(formGst) || 0,
-        stock: formStock.trim() !== '' ? parseInt(formStock, 10) : null,
+        default_price: parseFloat(formPrice),
+        gst_percent: parseFloat(formGst),
+        stock: formStock ? parseInt(formStock, 10) : null,
       };
 
       if (editingProduct) {
@@ -131,23 +225,23 @@ export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearI
         setSuccessMessage('Product updated successfully');
       } else {
         await api.createProduct(payload);
-        setSuccessMessage('Product added to catalog');
+        setSuccessMessage('Product created successfully');
       }
 
       setShowAddModal(false);
-      loadProducts();
-      setTimeout(() => setSuccessMessage(''), 4000);
+      loadData();
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to save product');
     }
   }
 
   async function handleDeleteProduct(id) {
-    if (!window.confirm('Are you sure you want to remove this product from the catalog?')) return;
+    if (!window.confirm('Are you sure you want to delete this product?')) return;
     try {
       await api.deleteProduct(id);
       setSuccessMessage('Product removed');
-      loadProducts();
+      loadData();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to delete product');
@@ -159,279 +253,472 @@ export function ShopView({ onSelectBarcodeForScan, initialBarcodeToAdd, onClearI
     if (!importCsv.trim()) return;
     try {
       const res = await api.importProducts(importCsv, true);
+      setSuccessMessage(`Successfully imported ${res.added} products (${res.failed} failed)`);
       setShowImportModal(false);
       setImportCsv('');
-      setSuccessMessage(`Import complete: ${res.added} added, ${res.failed} skipped.`);
-      loadProducts();
-      setTimeout(() => setSuccessMessage(''), 5000);
+      loadData();
+      setTimeout(() => setSuccessMessage(''), 4000);
     } catch (err) {
-      setErrorMessage(err.message || 'Import failed');
+      setErrorMessage(err.message || 'Failed to import CSV');
     }
   }
 
   return (
     <div>
-      {/* Top Banners */}
-      {errorMessage && (
-        <div className="toast-banner toast-danger">
-          <span>{errorMessage}</span>
-          <button className="btn btn-sm" onClick={() => setErrorMessage('')}>Dismiss</button>
-        </div>
-      )}
-      {successMessage && (
-        <div className="toast-banner toast-success">
-          <span>{successMessage}</span>
-          <button className="btn btn-sm" onClick={() => setSuccessMessage('')}>Close</button>
-        </div>
-      )}
-
-      {/* Header and Controls */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+      {/* Header with Mode Toggle & Excel Export */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h1 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Catalog</h1>
+          <h1 style={{ fontSize: '1.4rem', fontWeight: 700 }}>Store & Catalog</h1>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Manage master items, prices and GST rates
+            Browse master product catalog or manage store inventory stock
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        {/* Action Controls */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Download Live Excel Activity Report */}
+          <a
+            href={api.getExcelDownloadUrl()}
+            className="btn btn-sm"
+            download
+            title="Download live 5-second cleaned Excel activity report with Activity, Alerts & Summary sheets"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#065F46', color: '#ECFDF5', borderColor: '#059669' }}
+          >
+            <FileSpreadsheet size={15} /> Export Excel Log (.xlsx)
+          </a>
+
           <button className="btn btn-sm" onClick={() => setShowImportModal(true)}>
             <Upload size={14} /> Import CSV
           </button>
-          <button className="btn btn-sm btn-primary" onClick={openCreateModal}>
+
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              setEditingProduct(null);
+              setFormBarcode('');
+              setFormName('');
+              setFormSku('');
+              setFormPrice('');
+              setFormStock('20');
+              setShowAddModal(true);
+            }}
+          >
             <Plus size={14} /> Add Product
           </button>
         </div>
       </div>
 
-      {/* Search Input */}
-      <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-        <div style={{ position: 'relative', flex: 1 }}>
-          <input
-            type="text"
-            className="input"
-            placeholder="Search catalog by name or barcode..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ paddingLeft: '34px' }}
-          />
-          <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
-        </div>
-        <button type="submit" className="btn">Search</button>
-      </form>
-
-      {/* Category Chips */}
-      <div className="chips-container">
-        {CATEGORIES.map((cat) => (
-          <button
-            key={cat}
-            className={`chip ${category === cat ? 'active' : ''}`}
-            onClick={() => setCategory(cat)}
-          >
-            {cat}
-          </button>
-        ))}
+      {/* View Mode Tabs: Master Catalog vs Store Inventory */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>
+        <button
+          className={`btn btn-sm ${viewMode === 'catalog' ? 'btn-primary' : ''}`}
+          onClick={() => setViewMode('catalog')}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          <ShoppingCart size={15} /> Master Catalog (1-Click Add)
+        </button>
+        <button
+          className={`btn btn-sm ${viewMode === 'inventory' ? 'btn-primary' : ''}`}
+          onClick={() => setViewMode('inventory')}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          <PackagePlus size={15} /> Inventory Management
+        </button>
       </div>
 
-      {/* Products Grid or Empty State */}
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-          Loading catalog items...
-        </div>
-      ) : products.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-title">No products in catalog</div>
-          <p className="empty-state-text">
-            The catalog is currently empty. Add products manually or bulk import a CSV list.
-          </p>
-          <button className="btn btn-primary" onClick={openCreateModal}>
-            <Plus size={16} /> Add First Product
-          </button>
-        </div>
-      ) : (
-        <div className="products-grid">
-          {products.map((p) => (
-            <div key={p.id} className="product-card">
-              <div>
-                <div className="product-category-tag">{p.category || 'General'}</div>
-                <div className="product-title">{p.name}</div>
-                <div className="product-barcode">Barcode: {p.barcode}</div>
-                {p.stock !== null && (
-                  <div style={{ fontSize: '0.78rem', color: p.stock > 0 ? 'var(--text-muted)' : 'var(--danger)', marginBottom: '8px' }}>
-                    Stock: {p.stock > 0 ? `${p.stock} units` : 'Out of stock'}
-                  </div>
-                )}
-              </div>
-
-              <div className="product-footer">
-                <div>
-                  <div className="product-price">₹{Number(p.price).toFixed(2)}</div>
-                  <span className="product-gst">+{p.gst_percent}% GST</span>
-                </div>
-
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button
-                    className="btn btn-sm"
-                    title="Edit Product"
-                    onClick={() => openEditModal(p)}
-                  >
-                    <Edit2 size={13} />
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    title="Delete Product"
-                    onClick={() => handleDeleteProduct(p.id)}
-                  >
-                    <Trash2 size={13} style={{ color: 'var(--danger)' }} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+      {/* Notifications */}
+      {successMessage && (
+        <div className="toast-banner toast-success" style={{ marginBottom: '12px' }}>
+          <span>{successMessage}</span>
+          <button className="btn btn-sm" onClick={() => setSuccessMessage('')}>Dismiss</button>
         </div>
       )}
 
-      {/* Add / Edit Product Modal */}
-      {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="card-header">
-              <h3 className="card-title">{editingProduct ? 'Edit Product' : 'Add New Product'}</h3>
-              <button className="btn btn-sm" onClick={() => setShowAddModal(false)}>✕</button>
-            </div>
+      {errorMessage && (
+        <div className="toast-banner toast-danger" style={{ marginBottom: '12px' }}>
+          <span>{errorMessage}</span>
+          <button className="btn btn-sm" onClick={() => setErrorMessage('')}>Dismiss</button>
+        </div>
+      )}
 
-            <form onSubmit={handleSaveProduct}>
-              <div className="form-group">
-                <label className="form-label">Barcode Number *</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    required
-                    className="input"
-                    placeholder="e.g. 8901030383921"
-                    value={formBarcode}
-                    onChange={(e) => setFormBarcode(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    style={{ whiteSpace: 'nowrap' }}
-                    disabled={!formBarcode.trim() || aiLoading}
-                    onClick={handleAiLookup}
-                  >
-                    {aiLoading ? 'Looking up...' : 'AI Suggest'}
-                  </button>
+      {/* Search and Category Filters */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px' }}>
+        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              className="input"
+              style={{ paddingLeft: '36px', width: '100%' }}
+              placeholder={viewMode === 'catalog' ? 'Search master catalog by Name, Brand, SKU, or Barcode...' : 'Search store inventory...'}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn btn-primary">Search</button>
+        </form>
+
+        {/* Category Pills */}
+        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              className={`btn btn-sm ${category === cat ? 'btn-primary' : ''}`}
+              style={{ borderRadius: '20px', padding: '4px 12px', whiteSpace: 'nowrap' }}
+              onClick={() => setCategory(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* LOADING STATE */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+          Loading products...
+        </div>
+      ) : viewMode === 'catalog' ? (
+        /* ========================================================================= */
+        /* MODE 1: MASTER PRODUCT CATALOG (Browse & 1-Click Add with Quantity)      */
+        /* ========================================================================= */
+        catalogItems.length === 0 ? (
+          <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+            <AlertCircle size={32} style={{ margin: '0 auto 10px', color: 'var(--text-muted)' }} />
+            <p>No catalog products match your search.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
+            {catalogItems.map((item) => {
+              const qty = getQty(item.id);
+              const isOut = item.stock_status === 'out_of_stock';
+              const isNotStocked = item.stock_status === 'not_stocked';
+              const isLow = item.stock_status === 'low_stock';
+
+              return (
+                <div key={item.id} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '16px', position: 'relative' }}>
+                  {/* Stock Status Badge */}
+                  <div style={{ position: 'absolute', top: '12px', right: '12px' }}>
+                    {isNotStocked ? (
+                      <span style={{ fontSize: '0.72rem', backgroundColor: '#F1F5F9', color: '#475569', padding: '3px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        Not in Inventory
+                      </span>
+                    ) : isOut ? (
+                      <span style={{ fontSize: '0.72rem', backgroundColor: '#FEE2E2', color: '#991B1B', padding: '3px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        Out of Stock
+                      </span>
+                    ) : isLow ? (
+                      <span style={{ fontSize: '0.72rem', backgroundColor: '#FEF3C7', color: '#92400E', padding: '3px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        Low Stock ({item.stock_qty})
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.72rem', backgroundColor: '#DCFCE7', color: '#166534', padding: '3px 8px', borderRadius: '12px', fontWeight: 600 }}>
+                        In Stock ({item.stock_qty})
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    {/* Category & Brand */}
+                    <div style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      {item.brand ? `${item.brand} • ` : ''}{item.category}
+                    </div>
+
+                    {/* Product Name */}
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: '4px 0 6px' }}>
+                      {item.name}
+                    </h3>
+
+                    {/* SKU & Barcode */}
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                      SKU: <strong>{item.sku}</strong> {item.barcode ? `| Barcode: ${item.barcode}` : ''}
+                    </div>
+
+                    {/* Description */}
+                    {item.description && (
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '12px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {item.description}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Price & Action Row */}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '12px', marginTop: 'auto' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                        ₹{Number(item.inventory_price || item.default_price).toFixed(2)}
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}> /{item.unit}</span>
+                      </div>
+
+                      {/* Quantity Stepper (+/-) */}
+                      {!isNotStocked && !isOut && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-main)', border: '1px solid var(--border)', borderRadius: '6px', padding: '2px 4px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setQty(item.id, qty - 1)}
+                            disabled={qty <= 1}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px' }}
+                          >
+                            <Minus size={13} />
+                          </button>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, minWidth: '18px', textAlign: 'center' }}>
+                            {qty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setQty(item.id, qty + 1)}
+                            disabled={item.stock_qty !== null && qty >= item.stock_qty}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px' }}
+                          >
+                            <Plus size={13} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action Button */}
+                    {isNotStocked ? (
+                      <button
+                        className="btn btn-sm"
+                        style={{ width: '100%', justifyContent: 'center' }}
+                        onClick={() => openStockModal(item)}
+                      >
+                        <PackagePlus size={14} /> Add to Store Inventory
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        style={{ width: '100%', justifyContent: 'center' }}
+                        disabled={isOut || addingToCartId === item.id}
+                        onClick={() => handleAddToCart(item)}
+                      >
+                        <ShoppingCart size={14} />
+                        {isOut ? 'Out of Stock' : (addingToCartId === item.id ? 'Adding...' : `Add ${qty > 1 ? `${qty} items` : ''} to Cart`)}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              );
+            })}
+          </div>
+        )
+      ) : (
+        /* ========================================================================= */
+        /* MODE 2: STORE INVENTORY MANAGEMENT TABLE                                  */
+        /* ========================================================================= */
+        inventoryProducts.length === 0 ? (
+          <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+            <AlertCircle size={32} style={{ margin: '0 auto 10px', color: 'var(--text-muted)' }} />
+            <p>No products in store inventory.</p>
+          </div>
+        ) : (
+          <div className="card" style={{ padding: '0', overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--bg-main)', borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ padding: '12px 16px' }}>Barcode</th>
+                  <th style={{ padding: '12px 16px' }}>Name</th>
+                  <th style={{ padding: '12px 16px' }}>Category</th>
+                  <th style={{ padding: '12px 16px' }}>Price</th>
+                  <th style={{ padding: '12px 16px' }}>Stock</th>
+                  <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventoryProducts.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 16px', fontFamily: 'monospace' }}>{p.barcode}</td>
+                    <td style={{ padding: '12px 16px', fontWeight: 600 }}>{p.name}</td>
+                    <td style={{ padding: '12px 16px' }}>{p.category}</td>
+                    <td style={{ padding: '12px 16px' }}>₹{Number(p.price).toFixed(2)}</td>
+                    <td style={{ padding: '12px 16px' }}>
+                      {p.stock === null || p.stock === undefined ? (
+                        <span style={{ color: 'var(--text-muted)' }}>Unlimited</span>
+                      ) : p.stock === 0 ? (
+                        <span style={{ color: 'var(--danger)', fontWeight: 600 }}>0 (Out of stock)</span>
+                      ) : p.stock <= 5 ? (
+                        <span style={{ color: '#D97706', fontWeight: 600 }}>{p.stock} (Low)</span>
+                      ) : (
+                        <span>{p.stock}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ marginRight: '6px' }}
+                        onClick={() => {
+                          setEditingProduct(p);
+                          setFormBarcode(p.barcode || '');
+                          setFormName(p.name || '');
+                          setFormSku(p.sku || '');
+                          setFormCategory(p.category || 'General');
+                          setFormPrice(String(p.price || ''));
+                          setFormGst(String(p.gst_percent || '5.0'));
+                          setFormStock(p.stock !== null && p.stock !== undefined ? String(p.stock) : '');
+                          setShowAddModal(true);
+                        }}
+                      >
+                        <Edit2 size={13} />
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        style={{ color: 'var(--danger)' }}
+                        onClick={() => handleDeleteProduct(p.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
 
+      {/* MODAL: Stock a Catalog Product into Store Inventory */}
+      {showStockModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h2>Add to Store Inventory</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Stocking <strong>{showStockModal.name}</strong> ({showStockModal.sku}) into your local inventory.
+            </p>
+            <form onSubmit={handleStockCatalogItem}>
               <div className="form-group">
-                <label className="form-label">Product Name *</label>
+                <label>Selling Price (₹)</label>
                 <input
-                  type="text"
-                  required
+                  type="number"
+                  step="0.01"
                   className="input"
-                  placeholder="e.g. Amul Butter 100g"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
+                  required
+                  value={stockPrice}
+                  onChange={(e) => setStockPrice(e.target.value)}
                 />
               </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div className="form-group">
-                  <label className="form-label">Category</label>
-                  <select
-                    className="select"
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value)}
-                  >
-                    {CATEGORIES.filter(c => c !== 'All').map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                    <option value="General">General</option>
-                  </select>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Price (₹) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    className="input"
-                    placeholder="0.00"
-                    value={formPrice}
-                    onChange={(e) => setFormPrice(e.target.value)}
-                  />
-                </div>
+              <div className="form-group">
+                <label>Initial Stock Quantity</label>
+                <input
+                  type="number"
+                  className="input"
+                  required
+                  value={stockCount}
+                  onChange={(e) => setStockCount(e.target.value)}
+                />
               </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div className="form-group">
-                  <label className="form-label">GST Rate (%)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="100"
-                    className="input"
-                    placeholder="5.0"
-                    value={formGst}
-                    onChange={(e) => setFormGst(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Stock Quantity (optional)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    className="input"
-                    placeholder="Unlimited if blank"
-                    value={formStock}
-                    onChange={(e) => setFormStock(e.target.value)}
-                  />
-                </div>
-              </div>
-
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
-                <button type="button" className="btn" onClick={() => setShowAddModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">
-                  {editingProduct ? 'Save Changes' : 'Create Product'}
-                </button>
+                <button type="button" className="btn" onClick={() => setShowStockModal(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Confirm & Stock Item</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Bulk Import Modal */}
+      {/* MODAL: Add / Edit Product */}
+      {showAddModal && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h2>{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
+            <form onSubmit={handleSaveProduct}>
+              <div className="form-group">
+                <label>Barcode</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    className="input"
+                    value={formBarcode}
+                    onChange={(e) => setFormBarcode(e.target.value)}
+                    placeholder="e.g. 051111407592"
+                  />
+                  <button type="button" className="btn btn-sm" onClick={handleAiLookup} disabled={aiLoading || !formBarcode}>
+                    {aiLoading ? 'Looking up...' : 'AI Autofill'}
+                  </button>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Product Name</label>
+                <input
+                  type="text"
+                  className="input"
+                  required
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="e.g. Organic Whole Milk 1L"
+                />
+              </div>
+              <div className="form-group">
+                <label>SKU (Stock Keeping Unit)</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={formSku}
+                  onChange={(e) => setFormSku(e.target.value)}
+                  placeholder="e.g. DAIRY-MILK-1L"
+                />
+              </div>
+              <div className="form-group">
+                <label>Category</label>
+                <select className="input" value={formCategory} onChange={(e) => setFormCategory(e.target.value)}>
+                  {CATEGORIES.filter((c) => c !== 'All').map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div className="form-group">
+                  <label>Price (₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input"
+                    required
+                    value={formPrice}
+                    onChange={(e) => setFormPrice(e.target.value)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Stock Qty</label>
+                  <input
+                    type="number"
+                    className="input"
+                    placeholder="Leave empty for unlimited"
+                    value={formStock}
+                    onChange={(e) => setFormStock(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+                <button type="button" className="btn" onClick={() => setShowAddModal(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Save Product</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Import CSV */}
       {showImportModal && (
-        <div className="modal-overlay" onClick={() => setShowImportModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="card-header">
-              <h3 className="card-title">Bulk Import Products</h3>
-              <button className="btn btn-sm" onClick={() => setShowImportModal(false)}>✕</button>
-            </div>
-
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
-              Paste CSV text with header: <code>barcode,name,category,price,gst_percent,stock</code>
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h2>Bulk Import Products via CSV</h2>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              Paste CSV text with headers: <code>barcode,name,category,price,stock,sku</code>
             </p>
-
             <form onSubmit={handleImportSubmit}>
               <div className="form-group">
                 <textarea
-                  className="textarea"
+                  className="input"
                   rows={8}
-                  placeholder={`barcode,name,category,price,gst_percent,stock\n890100,Amul Taaza Milk,Dairy,27.00,5,30\n890101,Lays Classic Salted,Snacks,20.00,12,50`}
+                  style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}
+                  placeholder="barcode,name,category,price,stock,sku&#10;8901030383700,Maggi Noodles,Groceries,14.00,50,GROC-MAGGI"
                   value={importCsv}
                   onChange={(e) => setImportCsv(e.target.value)}
                 />
               </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                 <button type="button" className="btn" onClick={() => setShowImportModal(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Process Import</button>
+                <button type="submit" className="btn btn-primary">Start Import</button>
               </div>
             </form>
           </div>

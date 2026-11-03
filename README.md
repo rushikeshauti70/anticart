@@ -222,8 +222,8 @@ Alternatively, use the **Test simulation** toggle directly on the **Trolley** pa
 | Trolley status shows "Stale" | No telemetry received for > 6 seconds | Trolley Wi-Fi dropped or robot paused. Check status LED on ESP32. |
 | Cart does not update on other tabs | SSE connection closed | Ensure backend is running and `/api/stream` is accessible. The client reconnects automatically. |
 | Free-tier backend sleep | Render free tier spins down after 15 min of inactivity | Set up an external uptime monitor (e.g., UptimeRobot or Cron-job.org) to ping `/health` every 5 minutes. |
-#   a n t i c a r t  
- 
+# anticart
+
 
 ---
 
@@ -268,3 +268,92 @@ Simulates real barcode scanner hardware with interactive options:
 ### Database Migration
 If deploying to Supabase PostgreSQL, execute the migration:
 `backend/sql/migrations/002_inventory_stock_movements.sql`
+
+
+---
+
+## 8. Live Excel Logging with 5-Second Cleaning
+
+### Architecture & Non-Blocking Design
+The system records all sensor events (barcode scans, ultrasonic distance, cart additions, inventory movements, hardware status) into a bounded in-memory buffer. A dedicated background worker executes every 5 seconds (configurable via `EXCEL_FLUSH_INTERVAL_SEC`), cleaning the buffer without ever blocking the real-time scanning thread or Express event loop.
+
+```
+[Sensors / Scanners / MQTT / Inventory]
+                   │
+                   ▼ (Non-blocking emit)
+       [In-Memory Bounded Buffer (max 5,000)]
+                   │
+         [Every 5 Seconds Worker]
+                   ├─ 1. Drop Noise (heartbeats, empty reads, malformed pings)
+                   ├─ 2. Deduplicate (same barcode + action within 1500ms debounce)
+                   ├─ 3. Continuous Sensor Burst Collapsing (weight/ultrasonic threshold <5.0)
+                   ├─ 4. Multi-Step Scan Flow Merging (merge scan -> lookup -> cart -> stock into 1 row)
+                   ├─ 5. Whitelist Filter (keep only necessary operational actions)
+                   │
+                   ▼
+  [Atomic Write to ExcelJS Workbook (.temp rename)]
+  ├── "Activity" Sheet: All cleaned sensor actions with frozen styled headers & auto-filters
+  ├── "Alerts" Sheet: Filtered warnings (out_of_stock, low_stock, unknown_barcode, error)
+  └── "Summary" Sheet: Live operational metrics (total scans, active devices, error rates)
+```
+
+### Key Features
+- **Multi-Sheet Workbook**: Generates `.xlsx` files with `Activity` (color-coded rows: soft red `#FEE2E2` for out of stock, amber `#FEF3C7` for low stock/alerts, green `#DCFCE7` for additions), `Alerts`, and `Summary` tabs with dark blue `#1E293B` frozen headers.
+- **Windows File Lock (`EBUSY` / `EPERM`) Resilience**: If an operator opens the `.xlsx` file in Microsoft Excel during a scheduled flush, the logger catches the lock error, preserves the entire batch in memory, and automatically flushes on the next cycle once the file is unlocked. No data is ever dropped.
+- **CSV Mirror Fallback**: Simultaneously maintains an append-only `.csv` log (`exports/activity_YYYY-MM-DD.csv`) as an uncorruptible audit trail.
+- **Daily Rotation & 30-Day Retention**: Files automatically rotate daily (`activity_YYYY-MM-DD.xlsx`) or when exceeding 10,000 rows. Files older than 30 days are automatically pruned.
+- **REST & Download Endpoints**:
+  - `GET /api/reports/excel`: Download the latest styled `.xlsx` file.
+  - `GET /api/reports/csv`: Download the CSV fallback log.
+  - `GET /api/reports/stats`: Inspect buffer length, total cleaned events written, and last flush timestamp.
+  - `POST /api/reports/flush`: Manually trigger an immediate clean-and-flush cycle.
+
+### Running Excel Logger Tests
+```bash
+node backend/test/excel_logger.test.js
+```
+Runs 7 tests verifying noise dropping, debounce duplicate collapse, continuous sensor burst collapsing, multi-step scan flow merging, workbook styling, file lock recovery, and empty batch skipping.
+
+---
+
+## 9. Master Product Catalog & 1-Click Cart Addition
+
+### Architecture & Unified Inventory Engine
+The Master Product Catalog acts as the global item repository, decoupling store inventory from the central product master. Operators can browse products, search by SKU/barcode/name, filter by category, and add items directly to the shopping cart with 1 click.
+
+```
+[Master Product Catalog (catalog_products)]
+                   │
+     ┌─────────────┴─────────────┐
+     ▼                           ▼
+[Store Inventory (products)]   [Catalog Browser UI]
+     │                           │
+     │                           ▼ (1-Click Add with Quantity Stepper)
+     └──────────────────────────► [Inventory Service Mutex Lock]
+                                 ├─ Validate stock availability
+                                 ├─ Atomic stock decrement
+                                 ├─ Record stock_movement (audit log)
+                                 ├─ Check low_stock threshold (<= 3)
+                                 ├─ Idempotent replay protection (requestId)
+                                 └─ Publish MQTT event (source: 'catalog')
+```
+
+### Key Features
+- **Unified Mutex Locking**: Catalog additions reuse the exact same per-product mutex locks and atomic stock decrements as physical barcode scans, eliminating race conditions when multiple users or scanners compete for the last item.
+- **1-Click Cart Addition with Quantity Stepper**: Operators can select quantities (+ / -) directly from the Catalog view and add items to cart instantly without manual scanning.
+- **Live Stock Status Badges**: Visual indicators for `In stock`, `Low stock` (amber badge), `Out of stock` (red badge), and `Not in inventory` (purple badge).
+- **Auto-Linking & On-Demand Inventory Setup**: Unstocked catalog products can be added to store inventory with custom price and initial stock with a single click via `POST /api/catalog/:id/link-inventory`.
+- **Idempotency Protection**: Every catalog addition request accepts an optional `requestId` header or body parameter, preventing accidental double-charges if a network retry occurs.
+- **MQTT Event Attribution**: Emits `device/{device_id}/cart/item_added` with `source: "catalog"` to clearly distinguish manual UI additions from physical barcode scanner triggers.
+
+### Running Catalog System Integration Tests
+```bash
+node backend/test/catalog_system.test.js
+```
+Runs 7 integration tests covering catalog search, category filtering, quantity additions, high-concurrency mutex locking, idempotent duplicate replays, deactivated product protection, and auto-linking unstocked items.
+
+### Seeding Sample Catalog Data
+```bash
+node backend/scripts/seed_catalog.js
+```
+Populates the catalog with realistic products across Groceries, Snacks, Dairy, Beverages, and Electronics.

@@ -30,6 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 *.offline_queue.json
 .offline_queue.json
+exports/*.xlsx
+exports/*.csv
+!exports/.gitkeep
 *.db
 *.sqlite
 coverage/

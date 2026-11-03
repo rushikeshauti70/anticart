@@ -30,6 +30,17 @@ export const config = {
     offlineQueueMax: parseInt(process.env.OFFLINE_QUEUE_MAX || '500', 10),
     offlineQueueFile: process.env.OFFLINE_QUEUE_FILE || path.resolve(process.cwd(), '.offline_queue.json'),
   },
+  excelLogger: {
+    flushIntervalSec: parseInt(process.env.EXCEL_FLUSH_INTERVAL_SEC || '5', 10),
+    exportsDir: process.env.EXCEL_PATH || path.resolve(process.cwd(), 'exports'),
+    rotateRows: parseInt(process.env.EXCEL_ROTATE_ROWS || '10000', 10),
+    retentionDays: parseInt(process.env.EXCEL_RETENTION_DAYS || '30', 10),
+    sensorChangeThreshold: parseFloat(process.env.SENSOR_CHANGE_THRESHOLD || '2.0'),
+    eventWhitelist: (process.env.EVENT_WHITELIST || 'product_added,product_removed,quantity_changed,stock_changed,out_of_stock,low_stock,unknown_barcode,scan_rejected,device_online,device_offline,error')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean),
+  },
   supabase: {
     url: process.env.SUPABASE_URL || '',
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || '',

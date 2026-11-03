@@ -41,6 +41,34 @@ export const api = {
   // Health
   getHealth: () => request('/health'),
 
+  // Master Product Catalog
+  getCatalog: ({ search = '', category = '', page = 1, pageSize = 50 } = {}) => {
+    const params = new URLSearchParams({ search, category, page, pageSize });
+    return request(`/api/catalog?${params.toString()}`);
+  },
+  getCatalogItem: (id) => request(`/api/catalog/${id}`),
+  createCatalogItem: (data) => request('/api/catalog', { method: 'POST', body: JSON.stringify(data) }),
+  updateCatalogItem: (id, data) => request(`/api/catalog/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCatalogItem: (id) => request(`/api/catalog/${id}`, { method: 'DELETE' }),
+  importCatalog: (body, isCsv = false) => {
+    return request('/api/catalog/import', {
+      method: 'POST',
+      headers: isCsv ? { 'Content-Type': 'text/csv' } : undefined,
+      body: isCsv ? body : JSON.stringify(body),
+    });
+  },
+  linkCatalogToInventory: (id, data) => request(`/api/catalog/${id}/link-inventory`, { method: 'POST', body: JSON.stringify(data) }),
+  addCatalogItemToCart: ({ catalogId, productId, quantity = 1, requestId, trolleyId = 'trolley-01' }) =>
+    request('/api/cart/catalog-add', {
+      method: 'POST',
+      body: JSON.stringify({ catalogId, productId, quantity, requestId, trolleyId })
+    }),
+
+  // Reports & Live Excel Activity Logging
+  getReportStats: () => request('/api/reports/stats'),
+  getExcelDownloadUrl: () => `${API_BASE}/api/reports/excel`,
+  getCsvDownloadUrl: () => `${API_BASE}/api/reports/csv`,
+
   // Products
   getProducts: ({ search = '', category = '', page = 1, pageSize = 50 } = {}) => {
     const params = new URLSearchParams({ search, category, page, pageSize });
